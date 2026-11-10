@@ -150,6 +150,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.gray)
+                keyboardToggle
                 devicesMenu
                 Button("Open…") {
                     let panel = NSOpenPanel()
@@ -161,13 +162,28 @@ struct ContentView: View {
                 .tint(NordColor.red)
             }
             fxStrip
-            KeyboardView()
-                .frame(height: 190)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(NordColor.red.opacity(0.35), lineWidth: 1))
+            if model.showKeyboard {
+                KeyboardView()
+                    .frame(height: 190)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(NordColor.red.opacity(0.35), lineWidth: 1))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             }
             .padding(16)
         }
+    }
+
+    /// Show/hide the on-screen keyboard (hidden = view removed, nothing renders).
+    private var keyboardToggle: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { model.showKeyboard.toggle() }
+        } label: {
+            Image(systemName: "pianokeys")
+        }
+        .buttonStyle(.bordered)
+        .tint(model.showKeyboard ? NordColor.red : .gray)
+        .help(model.showKeyboard ? "Hide keyboard" : "Show keyboard")
     }
 
     /// Audio output + MIDI input pickers (audio interfaces, keyboard controllers).

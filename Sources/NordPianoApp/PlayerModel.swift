@@ -26,6 +26,10 @@ final class PlayerModel: ObservableObject {
     @Published var selected: Set<PianoEntry> = []
     @Published var gains: [URL: Float] = [:]
     @Published var favorites: [PianoEntry] = []
+    /// Show the on-screen keyboard; hidden removes the view entirely (no rendering at all).
+    @Published var showKeyboard: Bool = UserDefaults.standard.object(forKey: "showKeyboard") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showKeyboard, forKey: "showKeyboard") }
+    }
 
     // FX
     @Published var filterOn = false { didSet { applyFX() } }
