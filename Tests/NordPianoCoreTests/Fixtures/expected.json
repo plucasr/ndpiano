@@ -1,0 +1,172 @@
+{
+ "version": 1124,
+ "channels": 2,
+ "blockWords": 1022,
+ "zones": [
+  {
+   "rootNote": 41,
+   "lowNote": 0,
+   "highNote": 40
+  },
+  {
+   "rootNote": 72,
+   "lowNote": 41,
+   "highNote": 72
+  }
+ ],
+ "strokes": [
+  {
+   "index": 0,
+   "zone": 0,
+   "velocityFrom": 0,
+   "flags": 0,
+   "release": false,
+   "frames": 28441,
+   "blocks": 16,
+   "loop": {
+    "start": 20000,
+    "length": 8000
+   },
+   "loopDecay": 0.9999895095825195,
+   "history": [
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     0
+    ]
+   ],
+   "ch0Hash": "46bea616",
+   "ch1Hash": "04fd93eb",
+   "ch0First8": [
+    0,
+    391,
+    780,
+    1166,
+    1548,
+    1925,
+    2293,
+    2654
+   ],
+   "ch0Last8": [
+    326,
+    394,
+    463,
+    532,
+    600,
+    668,
+    735,
+    801
+   ],
+   "peak": 7782
+  },
+  {
+   "index": 1,
+   "zone": 0,
+   "velocityFrom": 60,
+   "flags": 0,
+   "release": false,
+   "frames": 28379,
+   "blocks": 16,
+   "loop": {
+    "start": 20000,
+    "length": 8000
+   },
+   "loopDecay": 0.9999895095825195,
+   "history": [
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     0
+    ]
+   ],
+   "ch0Hash": "4eda75e3",
+   "ch1Hash": "6ca55c94",
+   "ch0First8": [
+    0,
+    430,
+    858,
+    1284,
+    1703,
+    2117,
+    2522,
+    2917
+   ],
+   "ch0Last8": [
+    -615,
+    -593,
+    -572,
+    -552,
+    -533,
+    -515,
+    -499,
+    -484
+   ],
+   "peak": 7782
+  },
+  {
+   "index": 2,
+   "zone": 1,
+   "velocityFrom": 0,
+   "flags": 0,
+   "release": false,
+   "frames": 16511,
+   "blocks": 10,
+   "loop": {
+    "start": 12000,
+    "length": 4000
+   },
+   "loopDecay": 0.9999324083328247,
+   "history": [
+    [
+     0,
+     0,
+     0,
+     0
+    ],
+    [
+     0,
+     0,
+     0,
+     0
+    ]
+   ],
+   "ch0Hash": "d59b5bd2",
+   "ch1Hash": "67747adb",
+   "ch0First8": [
+    0,
+    460,
+    917,
+    1370,
+    1818,
+    2258,
+    2689,
+    3108
+   ],
+   "ch0Last8": [
+    -480,
+    -461,
+    -443,
+    -426,
+    -409,
+    -394,
+    -379,
+    -364
+   ],
+   "peak": 7782
+  }
+ ]
+}
