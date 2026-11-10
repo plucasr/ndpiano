@@ -39,7 +39,7 @@ struct ContentView: View {
         return HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name).font(.callout).foregroundStyle(NordColor.text)
-                Text(entry.kind == "PIANO" ? "v\(entry.version)" : "SAMPLE · \(entry.url.pathExtension.lowercased())")
+                Text("v\(entry.version)")
                     .font(.caption2).foregroundStyle(NordColor.subtext)
             }
             Spacer()
@@ -152,8 +152,7 @@ struct ContentView: View {
                 .tint(.gray)
                 Button("Open…") {
                     let panel = NSOpenPanel()
-                    panel.allowedContentTypes = ["npno", "nsmp", "nsmp3", "nsmp4"]
-                        .compactMap { UTType(filenameExtension: $0) }
+                    panel.allowedContentTypes = [UTType(filenameExtension: "npno")].compactMap { $0 }
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url { model.load(url: url) }
                 }

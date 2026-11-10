@@ -8,8 +8,7 @@ let package = Package(
         .target(name: "NordPianoCore"),
         .target(
             name: "NordPianoEngine",
-            dependencies: ["NordPianoCore"],
-            resources: [.process("JS")]
+            dependencies: ["NordPianoCore"]
         ),
         .executableTarget(
             name: "nordpiano",

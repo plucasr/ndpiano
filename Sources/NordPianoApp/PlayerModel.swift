@@ -11,7 +11,7 @@ final class PlayerModel: ObservableObject {
         let name: String
         let version: String
         let folder: String // containing folder, relative to its root (for grouping)
-        var kind: String { url.pathExtension.lowercased() == "npno" ? "PIANO" : "SAMPLE" }
+        var kind: String { "PIANO" }
     }
 
     @Published var pianoTitle = "No piano loaded"
@@ -52,30 +52,21 @@ final class PlayerModel: ObservableObject {
     }
 
     /// Read just enough of a file for its identity — pianos are tens of MB.
-    /// Samples fall back to the file name (their metadata needs a full parse).
     private func identity(of url: URL) -> (name: String, version: String)? {
-        if url.pathExtension.lowercased() == "npno" {
-            guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-            defer { try? handle.close() }
-            guard let head = try? handle.read(upToCount: 2048), head.count > 0x67 else { return nil }
-            guard let id = readNspIdentity([UInt8](head)) else { return nil }
-            return (id.name ?? url.deletingPathExtension().lastPathComponent, id.version)
-        }
-        return (url.deletingPathExtension().lastPathComponent, "")
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        guard let head = try? handle.read(upToCount: 2048), head.count > 0x67 else { return nil }
+        guard let id = readNspIdentity([UInt8](head)) else { return nil }
+        return (id.name ?? url.deletingPathExtension().lastPathComponent, id.version)
     }
 
-    /// Full header read (name/version/zones of the loaded file, piano or sample).
+    /// Full header read (name/version/zones of the loaded piano).
     private func fullIdentity(of url: URL) -> (name: String, version: String, zones: Int)? {
         let fallback = url.deletingPathExtension().lastPathComponent
         let bytes = [UInt8]((try? Data(contentsOf: url)) ?? Data())
-        if url.pathExtension.lowercased() == "npno" {
-            guard let dir = try? readNspDirectory(bytes) else { return nil }
-            let id = readNspIdentity(bytes)
-            return (id?.name ?? fallback, id?.version ?? "", readNspZones(bytes).count)
-        }
-        guard let f = try? NsmpBridge.shared.load(bytes: bytes) else { return nil }
-        NsmpBridge.shared.release(handle: f.handle)
-        return (f.name.isEmpty ? fallback : f.name, f.version, f.zones.count)
+        guard let dir = try? readNspDirectory(bytes) else { return nil }
+        let id = readNspIdentity(bytes)
+        return (id?.name ?? fallback, id?.version ?? "", readNspZones(bytes).count)
     }
 
     // MARK: - Library roots
@@ -125,7 +116,7 @@ final class PlayerModel: ObservableObject {
                 at: root, includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { continue }
-            for case let file as URL in enumerator where ["npno", "nsmp", "nsmp3", "nsmp4"].contains(file.pathExtension.lowercased()) {
+            for case let file as URL in enumerator where file.pathExtension.lowercased() == "npno" {
                 if seen.insert(file).inserted, let id = identity(of: file) {
                     entries.append(PianoEntry(url: file, name: id.name, version: id.version, folder: ""))
                 }
@@ -184,11 +175,7 @@ final class PlayerModel: ObservableObject {
             let have = Set(player.layerIDs)
             for url in wanted.subtracting(have) {
                 let data = try Data(contentsOf: url)
-                if url.pathExtension.lowercased() == "npno" {
-                    try player.addLayer(bytes: [UInt8](data), id: url, gain: gains[url] ?? 1)
-                } else {
-                    try player.addSampleLayer(bytes: [UInt8](data), id: url, gain: gains[url] ?? 1)
-                }
+                try player.addLayer(bytes: [UInt8](data), id: url, gain: gains[url] ?? 1)
             }
             for url in have.subtracting(wanted) { player.removeLayer(id: url) }
             updateHeader()
@@ -211,10 +198,9 @@ final class PlayerModel: ObservableObject {
         }
         pianoTitle = info.name
         version = info.version
-        let kind = first.url.pathExtension.lowercased() == "npno" ? "piano" : "sample"
         status = selected.count > 1
             ? "Layering \(selected.count) sounds — \(info.zones) zones in \(first.name)"
-            : "Playing \(kind) — \(info.zones) zones. MIDI in, built-in audio out."
+            : "Playing piano — \(info.zones) zones. MIDI in, built-in audio out."
     }
 
     private func applyFX() {
@@ -242,11 +228,7 @@ final class PlayerModel: ObservableObject {
         for id in player.layerIDs { player.removeLayer(id: id) }
         do {
             let data = try Data(contentsOf: url)
-            if url.pathExtension.lowercased() == "npno" {
-                try player.addLayer(bytes: [UInt8](data), id: url)
-            } else {
-                try player.addSampleLayer(bytes: [UInt8](data), id: url)
-            }
+            try player.addLayer(bytes: [UInt8](data), id: url)
         } catch {
             status = "Error: \(error)"
             return

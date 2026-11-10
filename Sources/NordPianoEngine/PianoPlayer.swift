@@ -33,9 +33,7 @@ struct Layer {
     let id: URL
     var gain: Float
     var cache: [Int: CachedStroke] = [:]
-    // Exactly one of these is set:
-    var piano: (bytes: [UInt8], dir: NspDirectory, zones: [NspZone])?
-    var sample: (handle: Int, zones: [NsmpBridge.Zone])?
+    var piano: (bytes: [UInt8], dir: NspDirectory, zones: [NspZone])
 }
 
 /// Polyphonic player: decoded NSP strokes through AVAudioEngine (CoreAudio), MIDI in via
@@ -71,21 +69,7 @@ public final class PianoPlayer {
         _ = try addLayer(bytes: bytes, id: URL(fileURLWithPath: "piano.npno"))
     }
 
-    /// Add a Nord Sample (.nsmp/.nsmp3/.nsmp4) to the layered mix.
-    @discardableResult
-    public func addSampleLayer(bytes: [UInt8], id: URL, gain: Float = 1) throws -> Int {
-        let file = try NsmpBridge.shared.load(bytes: bytes)
-        guard !file.zones.isEmpty else { throw NspError.noDirectory }
-        lock.lock()
-        layers.append(Layer(id: id, gain: gain, sample: (handle: file.handle, zones: file.zones)))
-        let idx = layers.count - 1
-        lock.unlock()
-        return idx
-    }
-
     public init() {}
-
-    // MARK: - Layers
 
     /// Add a piano to the layered mix; returns its index. Layers mix in parallel.
     @discardableResult
@@ -103,11 +87,7 @@ public final class PianoPlayer {
     /// MIDI notes of recorded samples across layers (keyboard markers).
     public var markers: [Int] {
         lock.lock(); defer { lock.unlock() }
-        return layers.flatMap { layer -> [Int] in
-            if let p = layer.piano { return p.zones.map { $0.rootNote + Nsp.rootOffset } }
-            if let s = layer.sample { return s.zones.map { $0.rootKey } }
-            return []
-        }
+        return layers.flatMap { $0.piano.zones.map { $0.rootNote + Nsp.rootOffset } }
     }
 
     public func removeLayer(id: URL) {
@@ -290,17 +270,10 @@ public final class PianoPlayer {
         let snapshot = layers
         lock.unlock()
         for layer in snapshot {
-            let picked: (stroke: CachedStroke, rootKey: Int)?
-            if let piano = layer.piano {
-                guard let key = pianoKey(piano.zones, midi: note),
-                      let stroke = strokeFor(piano.dir, zone: key.zone, velocity: velocity) else { continue }
-                picked = (stroke: cachedOrDecodePiano(layer, stroke), rootKey: piano.zones[key.zone].rootNote + Nsp.rootOffset)
-            } else if let sample = layer.sample {
-                guard let zone = Self.pickZone(sample.zones, note: note, velocity: velocity) else { continue }
-                guard let stroke = cachedOrDecodeSample(layer, globalID: zone.globalID) else { continue }
-                picked = (stroke: stroke, rootKey: zone.rootKey)
-            } else { continue }
-            guard let picked else { continue }
+            guard let key = pianoKey(layer.piano.zones, midi: note),
+                  let stroke = strokeFor(layer.piano.dir, zone: key.zone, velocity: velocity) else { continue }
+            let picked = (stroke: cachedOrDecodePiano(layer, stroke),
+                          rootKey: layer.piano.zones[key.zone].rootNote + Nsp.rootOffset)
 
             let gain = Float(pow(10, -touchAttenuation(velocity) / 100)) * mixHeadroom * layer.gain
             lock.lock()
@@ -345,19 +318,10 @@ public final class PianoPlayer {
         lock.unlock()
     }
 
-    /// Sample zone pick: keys in range, then the velocity band; nearest key range otherwise.
-    static func pickZone(_ zones: [NsmpBridge.Zone], note: Int, velocity: Int) -> NsmpBridge.Zone? {
-        let inKey = zones.filter { $0.keyLow <= note && note <= $0.keyHigh }
-        let band = inKey.first(where: { $0.velLow <= velocity && velocity <= $0.velTop })
-        if let band { return band }
-        if let any = inKey.max(by: { $0.velTop < $1.velTop }) { return any }
-        return zones.filter({ $0.keyHigh >= note }).min(by: { $0.keyHigh < $1.keyHigh })
-    }
-
     private func cachedOrDecodePiano(_ layer: Layer, _ stroke: NspStroke) -> CachedStroke {
         lock.lock(); let cached = layer.cache[stroke.index]; lock.unlock()
         if let cached { return cached }
-        let decoded = (try? decodeNspStroke(layer.piano!.bytes, dir: layer.piano!.dir, stroke: stroke)) ?? []
+        let decoded = (try? decodeNspStroke(layer.piano.bytes, dir: layer.piano.dir, stroke: stroke)) ?? []
         let pcm = decoded.map { ch in ch.map { Float($0) / 32768 } }
         let result = CachedStroke(pcm: pcm, sampleRate: Double(Nsp.sampleRate),
                                   loopStart: stroke.loop.map { $0.start },
@@ -365,26 +329,6 @@ public final class PianoPlayer {
         lock.lock()
         if let idx = layers.firstIndex(where: { $0.id == layer.id }) {
             layers[idx].cache[stroke.index] = result
-        }
-        lock.unlock()
-        return result
-    }
-
-    private func cachedOrDecodeSample(_ layer: Layer, globalID: Int) -> CachedStroke? {
-        lock.lock(); let cached = layer.cache[globalID]; lock.unlock()
-        if let cached { return cached }
-        guard let s = try? NsmpBridge.shared.decodeStroke(handle: layer.sample!.handle, globalID: globalID) else { return nil }
-        // Sample codecs have varying int scales (16/24-bit) — normalize to full scale.
-        var pcm = s.channels
-        if let peak = pcm.flatMap({ $0.map(abs) }).max(), peak > 0 {
-            let scale = 0.95 / peak
-            pcm = pcm.map { $0.map { $0 * scale } }
-        }
-        let result = CachedStroke(pcm: pcm, sampleRate: s.sampleRate,
-                                  loopStart: s.loopStart, decayDbPerSecond: s.decayDbPerSecond)
-        lock.lock()
-        if let idx = layers.firstIndex(where: { $0.id == layer.id }) {
-            layers[idx].cache[globalID] = result
         }
         lock.unlock()
         return result
