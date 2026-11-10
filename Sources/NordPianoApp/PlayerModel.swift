@@ -25,6 +25,8 @@ final class PlayerModel: ObservableObject {
     @Published var library: [PianoEntry] = []
     @Published var selected: Set<PianoEntry> = []
     @Published var gains: [URL: Float] = [:]
+    /// Muted layers (mixer mute buttons).
+    @Published var muted: Set<URL> = []
     /// Per-layer mixer settings (EQ/filter/comp/reverb), keyed by layer URL, persisted.
     @Published var layerFX: [URL: PianoPlayer.LayerFX] = [:] {
         didSet { persistLayerFX() }
@@ -216,6 +218,12 @@ final class PlayerModel: ObservableObject {
         player?.setLayerGain(gain, id: entry.url)
     }
 
+    func toggleMute(_ entry: PianoEntry) {
+        let isMuted = !muted.contains(entry.url)
+        if isMuted { muted.insert(entry.url) } else { muted.remove(entry.url) }
+        player?.setLayerMuted(isMuted, id: entry.url)
+    }
+
     private func syncLayers() {
         do {
             if player == nil {
@@ -235,6 +243,7 @@ final class PlayerModel: ObservableObject {
                 let data = try Data(contentsOf: url)
                 try player.addLayer(bytes: [UInt8](data), id: url, gain: gains[url] ?? 1)
                 player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: url)
+                if muted.contains(url) { player.setLayerMuted(true, id: url) }
             }
             for url in have.subtracting(wanted) { player.removeLayer(id: url) }
             updateHeader()

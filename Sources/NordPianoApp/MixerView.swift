@@ -43,7 +43,8 @@ private struct ChannelStrip: View {
     }
 
     var body: some View {
-        VStack(spacing: 6) {
+        let isMuted = model.muted.contains(entry.url)
+        return VStack(spacing: 6) {
             Text(entry.name)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(NordColor.text)
@@ -52,7 +53,7 @@ private struct ChannelStrip: View {
                 .frame(maxWidth: .infinity)
 
             HStack(alignment: .top, spacing: 6) {
-                // Volume fader
+                // Volume fader + mute
                 VStack(spacing: 3) {
                     Fader(value: Binding(
                         get: { Double(model.gains[entry.url] ?? 1) },
@@ -61,6 +62,16 @@ private struct ChannelStrip: View {
                     Text("VOL")
                         .font(.system(size: 7, weight: .medium))
                         .foregroundStyle(NordColor.subtext)
+                    Button { model.toggleMute(entry) } label: {
+                        Text("M")
+                            .font(.system(size: 8, weight: .bold))
+                            .frame(width: 20, height: 13)
+                            .background(isMuted ? NordColor.red : Color.white.opacity(0.12),
+                                        in: RoundedRectangle(cornerRadius: 3))
+                            .foregroundStyle(isMuted ? .white : NordColor.subtext)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isMuted ? "Unmute" : "Mute")
                 }
                 .frame(maxHeight: .infinity)
 
@@ -107,6 +118,8 @@ private struct ChannelStrip: View {
         .background(NordColor.background)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(NordColor.red.opacity(0.25), lineWidth: 1))
+        .opacity(isMuted ? 0.45 : 1)
+        .animation(.easeInOut(duration: 0.15), value: isMuted)
     }
 }
 

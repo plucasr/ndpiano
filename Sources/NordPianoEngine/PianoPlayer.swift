@@ -32,6 +32,7 @@ struct CachedStroke {
 struct Layer {
     let id: URL
     var gain: Float
+    var muted = false
     var cache: [Int: CachedStroke] = [:]
     var piano: (bytes: [UInt8], dir: NspDirectory, zones: [NspZone])
 }
@@ -236,6 +237,14 @@ public final class PianoPlayer {
         lock.unlock()
     }
 
+    /// Mute a layer: kills its sounding voices and blocks new ones.
+    public func setLayerMuted(_ muted: Bool, id: URL) {
+        lock.lock()
+        if let i = layers.firstIndex(where: { $0.id == id }) { layers[i].muted = muted }
+        if muted, let channel = channels[id] { channel.voices.removeAll() }
+        lock.unlock()
+    }
+
 
     // MARK: - Engine + FX chain (source → low-pass → compressor → reverb → mixer)
 
@@ -273,15 +282,17 @@ public final class PianoPlayer {
         print("nordpiano: engine running at \(Int(outRate)) Hz — play; Ctrl-C to quit")
     }
 
-    private func param(_ unit: AVAudioUnit?, _ identifier: String) -> AUParameter? {
-        unit?.auAudioUnit.parameterTree?.allParameters.first {
-            $0.identifier.localizedCaseInsensitiveContains(identifier)
-        }
+    /// Set an AudioUnit parameter by its classic parameter ID (the hosted Apple
+    /// units expose numeric-string identifiers, so identifier matching fails;
+    /// the C API is unambiguous).
+    private func setParam(_ unit: AVAudioUnit?, _ id: AudioUnitParameterID, _ value: Float) {
+        guard let au = unit?.audioUnit else { return }
+        AudioUnitSetParameter(au, id, kAudioUnitScope_Global, 0, value, 0)
     }
 
     private func setBypass(_ unit: AVAudioUnit?, _ bypass: Bool) {
         guard let unit else { return }
-        var flag = bypass
+        var flag: UInt32 = bypass ? 1 : 0 // CoreAudio expects a 4-byte flag
         AudioUnitSetProperty(unit.audioUnit, kAudioUnitProperty_BypassEffect,
                              kAudioUnitScope_Global, 0, &flag, UInt32(MemoryLayout.size(ofValue: flag)))
     }
@@ -382,55 +393,56 @@ public final class PianoPlayer {
 
     private func applyChannelFX(_ channel: Channel) {
         let fx = channel.fx
-        let db = { (v: Double) in AUValue(v * 12) } // −1…1 → ±12 dB
-        // 3-band EQ: low shelf @200 Hz, mid parametric @1 kHz, high shelf @6 kHz.
-        param(channel.eqLow, "gain")?.value = db(fx.eqLow)
-        param(channel.eqLow, "cutoff")?.value = 200
+        // 3-band EQ: low shelf @200 Hz, mid parametric @1 kHz, high shelf @10 kHz
+        // (Apple's high-shelf cutoff bottoms out at 10 kHz).
+        let db = Float(12) // −1…1 → ±12 dB
+        setParam(channel.eqLow, kAULowShelfParam_CutoffFrequency, 200)
+        setParam(channel.eqLow, kAULowShelfParam_Gain, Float(fx.eqLow) * db)
         setBypass(channel.eqLow, fx.eqLow == 0)
-        param(channel.eqMid, "center")?.value = 1_000
-        param(channel.eqMid, "q")?.value = 0.8
-        param(channel.eqMid, "gain")?.value = db(fx.eqMid)
+        // ParametricEQ/HighShelf constants aren't exported in Swift; parameter
+        // IDs from Apple's AudioUnit headers: EQ center=0, Q=1, gain=2; shelf cutoff=0, gain=1.
+        setParam(channel.eqMid, 0, 1_000) // center frequency
+        setParam(channel.eqMid, 1, 1) // Q (unit minimum)
+        setParam(channel.eqMid, 2, Float(fx.eqMid) * db) // gain
         setBypass(channel.eqMid, fx.eqMid == 0)
-        param(channel.eqHigh, "gain")?.value = db(fx.eqHigh)
-        param(channel.eqHigh, "cutoff")?.value = 6_000
+        setParam(channel.eqHigh, 0, 10_000) // cutoff (unit minimum)
+        setParam(channel.eqHigh, 1, Float(fx.eqHigh) * db) // gain
         setBypass(channel.eqHigh, fx.eqHigh == 0)
         // Filter / compressor / reverb mirror the master-bus mappings.
-        param(channel.filter, "cutoff")?.value = AUValue(min(18_000, max(20, 200 * pow(90, fx.filterNorm))))
+        setParam(channel.filter, kLowPassParam_CutoffFrequency,
+                 Float(min(18_000, max(20, 200 * pow(90, fx.filterNorm)))))
         setBypass(channel.filter, !fx.filterOn)
-        let a = min(1, max(0, fx.compAmount))
-        param(channel.comp, "threshold")?.value = AUValue(-45 * a)
-        param(channel.comp, "attack")?.value = 5
-        param(channel.comp, "release")?.value = 250
-        param(channel.comp, "headroom")?.value = 8
-        param(channel.comp, "masterGain")?.value = AUValue(3 * a)
-        setBypass(channel.comp, !fx.compOn || a <= 0)
-        param(channel.reverb, "wetDry")?.value = AUValue(min(1, max(0, fx.reverbMix)) * 100)
-        param(channel.reverb, "decay")?.value = 1.8
+        applyCompressor(channel.comp, amount: fx.compOn ? fx.compAmount : 0)
+        setParam(channel.reverb, kReverb2Param_DryWetMix, Float(min(1, max(0, fx.reverbMix))) * 100)
+        setParam(channel.reverb, kReverb2Param_DecayTimeAt0Hz, 1.8)
         setBypass(channel.reverb, !fx.reverbOn)
+    }
+
+    /// DynamicsProcessor settings shared by master bus and channel strips.
+    private func applyCompressor(_ unit: AVAudioUnit?, amount: Double) {
+        let a = min(1, max(0, amount))
+        setParam(unit, kDynamicsProcessorParam_Threshold, Float(-45 * a))
+        setParam(unit, kDynamicsProcessorParam_OverallGain, Float(3 * a))
+        setBypass(unit, a <= 0)
     }
 
     /// FILTER knob: 20 Hz…18 kHz. `enabled` is the Nord-style on/off.
     public func setFilter(enabled: Bool, cutoffHz: Double) {
-        param(filterUnit, "cutoff")?.value = AUValue(min(18_000, max(20, cutoffHz)))
+        setParam(filterUnit, kLowPassParam_CutoffFrequency, Float(min(18_000, max(20, cutoffHz))))
         setBypass(filterUnit, !enabled)
     }
 
     /// COMPRESSOR amount 0…1: maps to threshold (0→−45 dB) with gentle makeup gain.
     public func setCompressor(amount: Double) {
-        let a = min(1, max(0, amount))
-        param(compUnit, "threshold")?.value = AUValue(-45 * a)
-        param(compUnit, "attack")?.value = 5 // ms
-        param(compUnit, "release")?.value = 250 // ms
-        param(compUnit, "headroom")?.value = 8 // dB of soft knee
-        param(compUnit, "masterGain")?.value = AUValue(3 * a) // dB makeup
-        setBypass(compUnit, a <= 0)
+        applyCompressor(compUnit, amount: amount)
     }
 
     /// REVERB: wet/dry mix 0…1 and room size mapped to decay time.
     public func setReverb(mix: Double, decaySeconds: Double) {
         let m = min(1, max(0, mix))
-        param(reverbUnit, "wetDry")?.value = AUValue(m * 100)
-        param(reverbUnit, "decay")?.value = AUValue(min(20, max(0.1, decaySeconds)))
+        setParam(reverbUnit, kReverb2Param_DryWetMix, Float(m * 100))
+        setParam(reverbUnit, kReverb2Param_DecayTimeAt0Hz, Float(min(20, max(0.1, decaySeconds))))
+        setParam(reverbUnit, kReverb2Param_DecayTimeAtNyquist, Float(min(20, max(0.1, decaySeconds))))
         setBypass(reverbUnit, m <= 0)
     }
 
@@ -546,6 +558,7 @@ public final class PianoPlayer {
             print("nordpiano: noteOn \(note) vel \(velocity), layers \(snapshot.map { $0.id.lastPathComponent }), engine running \(engine.isRunning)")
         }
         for layer in snapshot {
+            if layer.muted { continue }
             guard let key = pianoKey(layer.piano.zones, midi: note),
                   let stroke = strokeFor(layer.piano.dir, zone: key.zone, velocity: velocity) else { continue }
             let picked = (stroke: cachedOrDecodePiano(layer, stroke),
