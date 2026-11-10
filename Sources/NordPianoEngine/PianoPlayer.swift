@@ -29,12 +29,24 @@ struct CachedStroke {
     var decayDbPerSecond: Double
 }
 
+/// What a layer plays: a piano library (`.npno`, NSP/CNSP codec) or a Nord Sample
+/// (`.nsmp3`/`.nsmp4`, NW1 codec 3/4). Sample strokes decode lazily on first note,
+/// cached per layer like piano strokes.
+enum LayerSource {
+    case piano(bytes: [UInt8], dir: NspDirectory, zones: [NspZone])
+    case sample(bytes: [UInt8], zones: [NsmpZone])
+}
+
 struct Layer {
     let id: URL
     var gain: Float
     var muted = false
     var cache: [Int: CachedStroke] = [:]
-    var piano: (bytes: [UInt8], dir: NspDirectory, zones: [NspZone])
+    var source: LayerSource
+    /// Sample strokes decoded so far (keyed by global id); `sampleDecoded` marks the
+    /// whole-file decode having run (a stroke may legitimately be absent).
+    var sampleCache: [Int: CachedStroke] = [:]
+    var sampleDecoded = false
 }
 
 /// One channel strip of the mixer: a layer's voices plus its own FX unit chain
@@ -207,28 +219,57 @@ public final class PianoPlayer {
         let zones = readNspZones(bytes)
         guard !zones.isEmpty else { throw NspError.noDirectory }
         lock.lock()
-        layers.append(Layer(id: id, gain: gain, piano: (bytes: bytes, dir: dir, zones: zones)))
+        layers.append(Layer(id: id, gain: gain,
+                            source: .piano(bytes: bytes, dir: dir, zones: zones)))
         let idx = layers.count - 1
-        if engine.isRunning { attachChannel(id: id) }
         lock.unlock()
+        // Engine graph mutation outside the lock: detach/connect can block on the
+        // render thread, and the render callback takes this same lock.
+        if engine.isRunning { attachChannel(id: id) }
         if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
             print("nordpiano: addLayer \(id.lastPathComponent), engine running \(engine.isRunning), channels \(self.channels.keys.map { $0.lastPathComponent })")
         }
         return idx
     }
 
-    /// MIDI notes of recorded samples across layers (keyboard markers).
+    /// Add a Nord Sample (`.nsmp3`/`.nsmp4`) to the layered mix; returns its index.
+    /// Strokes decode lazily on the first note that references them.
+    @discardableResult
+    public func addSampleLayer(bytes: [UInt8], id: URL, gain: Float = 1) throws -> Int {
+        let identity = identifyNsmp(bytes)
+        guard identity.recognized, !identity.legacy,
+              let codec = identity.codec, codec == 3 || codec == 4 else { throw NsmpError.notASample }
+        let zones = readNsmpZones(bytes)
+        guard !zones.isEmpty else { throw NsmpError.badBlock("sample has no zones") }
+        lock.lock()
+        layers.append(Layer(id: id, gain: gain, source: .sample(bytes: bytes, zones: zones)))
+        let idx = layers.count - 1
+        lock.unlock()
+        if engine.isRunning { attachChannel(id: id) }
+        return idx
+    }
+
+    /// MIDI notes of recorded samples across layers (keyboard markers). Sample zones
+    /// use their absolute root keys — no piano offset.
     public var markers: [Int] {
         lock.lock(); defer { lock.unlock() }
-        return layers.flatMap { $0.piano.zones.map { $0.rootNote + Nsp.rootOffset } }
+        return layers.flatMap { layer -> [Int] in
+            switch layer.source {
+            case .piano(_, _, let zones):
+                return zones.map { $0.rootNote + Nsp.rootOffset }
+            case .sample(_, let zones):
+                return zones.map(\.rootKey)
+            }
+        }
     }
 
     public func removeLayer(id: URL) {
         lock.lock()
         layers.removeAll { $0.id == id }
-        if engine.isRunning { detachChannel(id: id) }
-        channels[id] = nil
+        let channel = channels.removeValue(forKey: id)
         lock.unlock()
+        // Detach off the lock: engine graph changes can block on the render thread.
+        if engine.isRunning, let channel { detach(channel: channel) }
     }
 
     public func setLayerGain(_ gain: Float, id: URL) {
@@ -366,13 +407,11 @@ public final class PianoPlayer {
         applyChannelFX(channel)
     }
 
-    private func detachChannel(id: URL) {
-        guard let channel = channels[id] else { return }
+    private func detach(channel: Channel) {
         let nodes: [AVAudioNode] = [channel.source, channel.eqLow, channel.eqMid, channel.eqHigh,
                                     channel.filter, channel.comp, channel.reverb].compactMap { $0 }
         for node in nodes { engine.disconnectNodeInput(node); engine.disconnectNodeOutput(node) }
         for node in nodes { engine.detach(node) }
-        channels[id] = nil
     }
 
     /// Per-layer FX: EQ shelves/peaking, filter, compressor, reverb. All bypassed when off/flat.
@@ -559,10 +598,7 @@ public final class PianoPlayer {
         }
         for layer in snapshot {
             if layer.muted { continue }
-            guard let key = pianoKey(layer.piano.zones, midi: note),
-                  let stroke = strokeFor(layer.piano.dir, zone: key.zone, velocity: velocity) else { continue }
-            let picked = (stroke: cachedOrDecodePiano(layer, stroke),
-                          rootKey: layer.piano.zones[key.zone].rootNote + Nsp.rootOffset)
+            guard let picked = pickStroke(layer, note: note, velocity: velocity) else { continue }
 
             let gain = Float(pow(10, -touchAttenuation(velocity) / 100)) * mixHeadroom * layer.gain
             var v = Voice(pcm: picked.stroke.pcm, rate: 1, gain: gain, note: note)
@@ -617,10 +653,29 @@ public final class PianoPlayer {
         lock.unlock()
     }
 
-    private func cachedOrDecodePiano(_ layer: Layer, _ stroke: NspStroke) -> CachedStroke {
+    /// Pick the stroke + root key for a note on one layer: piano zones route through
+    /// the layer table and velocity floors; sample zones match key range + velocity
+    /// range directly and name their stroke by global id.
+    private func pickStroke(_ layer: Layer, note: Int, velocity: Int) -> (stroke: CachedStroke, rootKey: Int)? {
+        switch layer.source {
+        case .piano(let bytes, let dir, let zones):
+            guard let key = pianoKey(zones, midi: note),
+                  let stroke = strokeFor(dir, zone: key.zone, velocity: velocity) else { return nil }
+            return (cachedOrDecodePiano(layer, stroke, bytes: bytes, dir: dir),
+                    zones[key.zone].rootNote + Nsp.rootOffset)
+        case .sample(let bytes, let zones):
+            guard let zone = nsmpZone(for: note, velocity: velocity, in: zones) else { return nil }
+            let strokes = cachedOrDecodeSample(layer, bytes: bytes)
+            guard let stroke = strokes[zone.globalID] else { return nil }
+            return (stroke, zone.rootKey)
+        }
+    }
+
+    private func cachedOrDecodePiano(_ layer: Layer, _ stroke: NspStroke,
+                                     bytes: [UInt8], dir: NspDirectory) -> CachedStroke {
         lock.lock(); let cached = layer.cache[stroke.index]; lock.unlock()
         if let cached { return cached }
-        let decoded = (try? decodeNspStroke(layer.piano.bytes, dir: layer.piano.dir, stroke: stroke)) ?? []
+        let decoded = (try? decodeNspStroke(bytes, dir: dir, stroke: stroke)) ?? []
         let pcm = decoded.map { ch in ch.map { Float($0) / 32768 } }
         let result = CachedStroke(pcm: pcm, sampleRate: Double(Nsp.sampleRate),
                                   loopStart: stroke.loop.map { $0.start },
@@ -631,6 +686,30 @@ public final class PianoPlayer {
         }
         lock.unlock()
         return result
+    }
+
+    /// Decode the whole sample on first use, cached per layer, keyed by stroke global id.
+    /// The NW1 decode is fast (a 20-stroke file decodes in <100 ms); sample files are small.
+    private func cachedOrDecodeSample(_ layer: Layer, bytes: [UInt8]) -> [Int: CachedStroke] {
+        lock.lock(); let done = layer.sampleDecoded; lock.unlock()
+        if done { return layer.sampleCache }
+        let decoded = (try? decodeNsmpStrokes(bytes)) ?? []
+        var byID: [Int: CachedStroke] = [:]
+        for item in decoded {
+            let s = item.stroke
+            byID[Int(s.globalID)] = CachedStroke(
+                pcm: item.channels.map { ch in ch.map { Float($0) / 32768 } },
+                sampleRate: Double(s.sampleRate),
+                loopStart: s.loop?.start,
+                decayDbPerSecond: s.loopDecayDbPerSecond)
+        }
+        lock.lock()
+        if let idx = layers.firstIndex(where: { $0.id == layer.id }) {
+            layers[idx].sampleCache = byID
+            layers[idx].sampleDecoded = true
+        }
+        lock.unlock()
+        return byID
     }
 
     // MARK: - Render (audio thread, one source-node callback per channel)

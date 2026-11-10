@@ -7,6 +7,7 @@ struct NordPianoApp: App {
 
     init() {
         setbuf(stdout, nil) // print() to a pipe/file is block-buffered otherwise
+        UbuntuFont.install()
         NSApplication.shared.applicationIconImage = makeAppIcon()
     }
 

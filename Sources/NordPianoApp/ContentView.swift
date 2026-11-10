@@ -71,7 +71,7 @@ struct ContentView: View {
                     .fill(NordColor.red)
                     .frame(width: 10, height: 26)
                 Text("nordpiano")
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
+                    .font(.system(size: 20, weight: .bold))
                     .foregroundStyle(NordColor.text)
                 Text("LOCAL AUDITION · NOT AFFILIATED WITH NORD / CLAVIA")
                     .font(.system(size: 9, weight: .medium))
@@ -81,7 +81,7 @@ struct ContentView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(model.pianoTitle).font(.headline).foregroundStyle(NordColor.text)
                 if !model.version.isEmpty {
-                    Text("piano library v\(model.version)")
+                    Text("sample library v\(model.version)")
                         .font(.caption).foregroundStyle(NordColor.subtext)
                 }
             }
@@ -145,7 +145,7 @@ struct ContentView: View {
                     panel.canChooseDirectories = true
                     panel.canChooseFiles = false
                     panel.allowsMultipleSelection = false
-                    panel.message = "Add a folder of .npno pianos to the library"
+                    panel.message = "Add a folder of .npno pianos and .nsmp3/.nsmp4 samples to the library"
                     if panel.runModal() == .OK, let url = panel.url { model.addFolder(url) }
                 }
                 .buttonStyle(.bordered)
@@ -154,7 +154,7 @@ struct ContentView: View {
                 devicesMenu
                 Button("Open…") {
                     let panel = NSOpenPanel()
-                    panel.allowedContentTypes = [UTType(filenameExtension: "npno")].compactMap { $0 }
+                    panel.allowedContentTypes = ["npno", "nsmp3", "nsmp4"].compactMap { UTType(filenameExtension: $0) }
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url { model.load(url: url) }
                 }
@@ -216,43 +216,24 @@ struct ContentView: View {
         .help("Audio output & MIDI input")
     }
 
-    /// Nord-style FX row: FILTER / COMPRESSOR / REVERB.
+    /// Nord-style FX row: FILTER / COMPRESSOR / REVERB — round knob(s) on top,
+    /// pill toggle below, so each group stays narrow.
     private var fxStrip: some View {
-        HStack(spacing: 24) {
+        HStack(alignment: .top, spacing: 20) {
             fxGroup(label: "FILTER", isOn: $model.filterOn) {
-                HStack(spacing: 6) {
-                    Text("CUT").font(.system(size: 9)).foregroundStyle(NordColor.subtext)
-                    Slider(value: $model.filterNorm).tint(NordColor.red).frame(maxWidth: 110)
-                    Text(model.filterNorm > 0.97 ? "∞" : "\(Int(200 * pow(90, model.filterNorm)))")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(NordColor.subtext).frame(width: 42, alignment: .trailing)
-                }
+                fxKnob(value: $model.filterNorm, caption: "CUT",
+                       readout: model.filterNorm > 0.97 ? "∞" : "\(Int(200 * pow(90, model.filterNorm)))")
             }
-            fxGroup(label: "COMPRESSOR", isOn: $model.compOn) {
-                HStack(spacing: 6) {
-                    Text("AMT").font(.system(size: 9)).foregroundStyle(NordColor.subtext)
-                    Slider(value: $model.compAmount).tint(NordColor.red).frame(maxWidth: 110)
-                    Text("\(Int(model.compAmount * 100))%")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(NordColor.subtext).frame(width: 38, alignment: .trailing)
-                }
+            fxGroup(label: "COMP", isOn: $model.compOn) {
+                fxKnob(value: $model.compAmount, caption: "AMT",
+                       readout: "\(Int(model.compAmount * 100))%")
             }
             fxGroup(label: "REVERB", isOn: $model.reverbOn) {
                 HStack(spacing: 10) {
-                    HStack(spacing: 4) {
-                        Text("MIX").font(.system(size: 9)).foregroundStyle(NordColor.subtext)
-                        Slider(value: $model.reverbMix).tint(NordColor.red).frame(maxWidth: 80)
-                        Text("\(Int(model.reverbMix * 100))%")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(NordColor.subtext).frame(width: 34, alignment: .trailing)
-                    }
-                    HStack(spacing: 4) {
-                        Text("SIZE").font(.system(size: 9)).foregroundStyle(NordColor.subtext)
-                        Slider(value: $model.reverbSize).tint(NordColor.red).frame(maxWidth: 80)
-                        Text("\(String(format: "%.1f", 0.3 + model.reverbSize * 6.7))s")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(NordColor.subtext).frame(width: 34, alignment: .trailing)
-                    }
+                    fxKnob(value: $model.reverbMix, caption: "MIX",
+                           readout: "\(Int(model.reverbMix * 100))%")
+                    fxKnob(value: $model.reverbSize, caption: "SIZE",
+                           readout: String(format: "%.1f", 0.3 + model.reverbSize * 6.7) + "s")
                 }
             }
             Spacer()
@@ -263,13 +244,23 @@ struct ContentView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    /// One round knob with its live value readout above the caption.
+    private func fxKnob(value: Binding<Double>, caption: String, readout: String) -> some View {
+        VStack(spacing: 2) {
+            Text(readout)
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(NordColor.subtext)
+            Knob(value: value, label: caption)
+        }
+    }
+
     private func fxGroup<Content: View>(label: String, isOn: Binding<Bool>, @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 8) {
-            Toggle(label, isOn: isOn)
-                .toggleStyle(PillToggleStyle(labelBelow: true))
+        VStack(spacing: 4) {
             content()
                 .disabled(!isOn.wrappedValue)
                 .opacity(isOn.wrappedValue ? 1 : 0.4)
+            Toggle(label, isOn: isOn)
+                .toggleStyle(PillToggleStyle(labelBelow: true))
         }
     }
 

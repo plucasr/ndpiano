@@ -20,7 +20,7 @@ final class PlayerModel: ObservableObject {
     @Published var version = ""
     @Published var velocity: Double = 80
     @Published var sounding: Set<Int> = []
-    @Published var status = "Drop a .npno file anywhere, or Open…"
+    @Published var status = "Drop a .npno or .nsmp4 file anywhere, or Open…"
     @Published var roots: [URL] = []
     @Published var library: [PianoEntry] = []
     @Published var selected: Set<PianoEntry> = []
@@ -111,20 +111,34 @@ final class PlayerModel: ObservableObject {
 
     /// Read just enough of a file for its identity — pianos are tens of MB.
     private func identity(of url: URL) -> (name: String, version: String)? {
+        let ext = url.pathExtension.lowercased()
+        guard ["npno", "nsmp3", "nsmp4"].contains(ext) else { return nil }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let head = try? handle.read(upToCount: 2048), head.count > 0x67 else { return nil }
-        guard let id = readNspIdentity([UInt8](head)) else { return nil }
-        return (id.name ?? url.deletingPathExtension().lastPathComponent, id.version)
+        let bytes = [UInt8](head)
+        let fallback = url.deletingPathExtension().lastPathComponent
+        if ext == "npno" {
+            guard let id = readNspIdentity(bytes) else { return nil }
+            return (id.name ?? fallback, id.version)
+        }
+        let id = identifyNsmp(bytes)
+        guard id.recognized, !id.legacy else { return nil }
+        return (readNsmpName(bytes) ?? fallback, id.version ?? "")
     }
 
-    /// Full header read (name/version/zones of the loaded piano).
+    /// Full header read (name/version/zones of the loaded sound).
     private func fullIdentity(of url: URL) -> (name: String, version: String, zones: Int)? {
         let fallback = url.deletingPathExtension().lastPathComponent
         let bytes = [UInt8]((try? Data(contentsOf: url)) ?? Data())
-        guard let dir = try? readNspDirectory(bytes) else { return nil }
-        let id = readNspIdentity(bytes)
-        return (id?.name ?? fallback, id?.version ?? "", readNspZones(bytes).count)
+        if url.pathExtension.lowercased() == "npno" {
+            guard let dir = try? readNspDirectory(bytes) else { return nil }
+            let id = readNspIdentity(bytes)
+            return (id?.name ?? fallback, id?.version ?? "", readNspZones(bytes).count)
+        }
+        let id = identifyNsmp(bytes)
+        guard id.recognized, !id.legacy else { return nil }
+        return (readNsmpName(bytes) ?? fallback, id.version ?? "", readNsmpZones(bytes).count)
     }
 
     // MARK: - Library roots
@@ -174,7 +188,7 @@ final class PlayerModel: ObservableObject {
                 at: root, includingPropertiesForKeys: nil,
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) else { continue }
-            for case let file as URL in enumerator where file.pathExtension.lowercased() == "npno" {
+            for case let file as URL in enumerator where ["npno", "nsmp3", "nsmp4"].contains(file.pathExtension.lowercased()) {
                 if seen.insert(file).inserted, let id = identity(of: file) {
                     entries.append(PianoEntry(url: file, name: id.name, version: id.version, folder: ""))
                 }
@@ -186,8 +200,8 @@ final class PlayerModel: ObservableObject {
         selected = selected.filter { sel in entries.contains(sel) || FileManager.default.fileExists(atPath: sel.url.path) }
         if selected.isEmpty, let first = entries.first { selected = [first] }
         status = roots.isEmpty
-            ? "Add a folder (Folder…) or drop a .npno"
-            : "\(entries.count) pianos in \(roots.count) folder\(roots.count == 1 ? "" : "s") — click to play, click again to layer"
+            ? "Add a folder (Folder…), or drop a .npno / .nsmp4"
+            : "\(entries.count) sounds in \(roots.count) folder\(roots.count == 1 ? "" : "s") — click to play, click again to layer"
         syncLayers()
     }
 
@@ -241,7 +255,7 @@ final class PlayerModel: ObservableObject {
             let have = Set(player.layerIDs)
             for url in wanted.subtracting(have) {
                 let data = try Data(contentsOf: url)
-                try player.addLayer(bytes: [UInt8](data), id: url, gain: gains[url] ?? 1)
+                try addToPlayer(player, bytes: [UInt8](data), url: url, gain: gains[url] ?? 1)
                 player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: url)
                 if muted.contains(url) { player.setLayerMuted(true, id: url) }
             }
@@ -250,6 +264,15 @@ final class PlayerModel: ObservableObject {
         } catch {
             status = "Error: \(error)"
             print("nordpiano: syncLayers error: \(error)")
+        }
+    }
+
+    /// Add a file to the player, picking the decoder by extension (piano vs sample).
+    private func addToPlayer(_ player: PianoPlayer, bytes: [UInt8], url: URL, gain: Float) throws {
+        if url.pathExtension.lowercased() == "npno" {
+            try player.addLayer(bytes: bytes, id: url, gain: gain)
+        } else {
+            try player.addSampleLayer(bytes: bytes, id: url, gain: gain)
         }
     }
 
@@ -269,7 +292,7 @@ final class PlayerModel: ObservableObject {
         version = info.version
         status = selected.count > 1
             ? "Layering \(selected.count) sounds — \(info.zones) zones in \(first.name)"
-            : "Playing piano — \(info.zones) zones. MIDI in, built-in audio out."
+            : "Playing — \(info.zones) zones. MIDI in, built-in audio out."
     }
 
     private func applyFX() {
@@ -297,7 +320,7 @@ final class PlayerModel: ObservableObject {
         for id in player.layerIDs { player.removeLayer(id: id) }
         do {
             let data = try Data(contentsOf: url)
-            try player.addLayer(bytes: [UInt8](data), id: url)
+            try addToPlayer(player, bytes: [UInt8](data), url: url, gain: 1)
             player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: url)
         } catch {
             status = "Error: \(error)"
