@@ -57,6 +57,93 @@ public final class PianoPlayer {
     private var reverbUnit: AVAudioUnit?
 
     var onSoundingNotes: (@Sendable (Set<Int>) -> Void)?
+
+    // MARK: - Devices
+
+    /// One CoreAudio output device (audio interface / built-in).
+    public struct AudioDevice: Identifiable, Equatable {
+        public let id: AudioDeviceID
+        public let name: String
+        public init(id: AudioDeviceID, name: String) { self.id = id; self.name = name }
+    }
+
+    /// One CoreMIDI source. Endpoint 0 = "all sources".
+    public struct MidiInput: Identifiable, Equatable {
+        public let id: MIDIEndpointRef
+        public let name: String
+        public init(id: MIDIEndpointRef, name: String) { self.id = id; self.name = name }
+    }
+
+    /// All output-capable audio devices.
+    public static func audioOutputDevices() -> [AudioDevice] {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr else { return [] }
+        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+        guard count > 0 else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
+        return ids.compactMap { id in
+            guard Self.outputChannelCount(id) > 0 else { return nil }
+            var nameAddr = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName,
+                                                      mScope: kAudioObjectPropertyScopeGlobal,
+                                                      mElement: kAudioObjectPropertyElementMain)
+            var name: Unmanaged<CFString>?
+            var nameSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectGetPropertyData(id, &nameAddr, 0, nil, &nameSize, &name) == noErr else { return nil }
+            return AudioDevice(id: id, name: (name?.takeRetainedValue() as String?) ?? "Device \(id)")
+        }
+    }
+
+    private static func outputChannelCount(_ id: AudioDeviceID) -> Int {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreamConfiguration,
+                                              mScope: kAudioDevicePropertyScopeOutput,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr, size > 0 else { return 0 }
+        let list = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(size))
+        defer { list.deallocate() }
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, list) == noErr else { return 0 }
+        return UnsafeMutableAudioBufferListPointer(list).reduce(0) { $0 + Int($1.mNumberChannels) }
+    }
+
+    public private(set) var selectedAudioDevice: AudioDeviceID = kAudioDeviceUnknown
+
+    /// Route output to a device (kAudioDeviceUnknown = system default). May be called
+    /// before start(); it's applied when the engine comes up.
+    public func setAudioOutputDevice(_ id: AudioDeviceID) throws {
+        selectedAudioDevice = id
+        guard engine.isRunning else { return }
+        var dev = id
+        let status = AudioUnitSetProperty(engine.outputNode.audioUnit!,
+                                          kAudioOutputUnitProperty_CurrentDevice,
+                                          kAudioUnitScope_Global, 0,
+                                          &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
+        guard status == noErr else {
+            throw NSError(domain: "nordpiano", code: 4, userInfo: [NSLocalizedDescriptionKey: "can't switch audio device (\(status))"])
+        }
+    }
+
+    /// All MIDI sources currently on the system.
+    public func midiInputs() -> [MidiInput] {
+        (0..<MIDIGetNumberOfSources()).map { i in
+            let s = MIDIGetSource(i)
+            var name: Unmanaged<CFString>?
+            MIDIObjectGetStringProperty(s, kMIDIPropertyName, &name)
+            return MidiInput(id: s, name: (name?.takeRetainedValue() as String?) ?? "Source \(s)")
+        }
+    }
+
+    /// Endpoint to listen to; 0 = all sources.
+    public private(set) var selectedMidiSource: MIDIEndpointRef = 0
+
+    public func selectMidiSource(_ id: MIDIEndpointRef) {
+        selectedMidiSource = id
+        reconnectMidiSources()
+    }
+
     private var lastSounding: Set<Int> = []
 
     private let releaseTau = 0.05 // key-up fade, ~60 dB in a third of a second
@@ -154,6 +241,11 @@ public final class PianoPlayer {
         setCompressor(amount: 0)
         setReverb(mix: 0, decaySeconds: 1.8)
 
+        // Re-apply the persisted output device now that the engine is live.
+        if selectedAudioDevice != kAudioDeviceUnknown {
+            try? setAudioOutputDevice(selectedAudioDevice)
+        }
+
         try setupMIDI()
         print("nordpiano: engine running at \(Int(outRate)) Hz — play; Ctrl-C to quit")
     }
@@ -198,6 +290,10 @@ public final class PianoPlayer {
 
     // MARK: - MIDI
 
+    private var midiClient: MIDIClientRef?
+    private var midiPort: MIDIPortRef?
+    private var connectedMidiSources: Set<MIDIEndpointRef> = []
+
     private func setupMIDI() throws {
         var client = MIDIClientRef()
         guard MIDIClientCreateWithBlock("nordpiano" as CFString, &client, { _ in }) == noErr else {
@@ -212,11 +308,23 @@ public final class PianoPlayer {
         guard MIDIInputPortCreateWithBlock(client, "in" as CFString, &port, callback) == noErr else {
             throw NSError(domain: "nordpiano", code: 2, userInfo: [NSLocalizedDescriptionKey: "MIDIInputPortCreate failed"])
         }
-        let sources = MIDIGetNumberOfSources()
-        for i in 0..<sources {
-            MIDIPortConnectSource(port, MIDIGetSource(i), nil)
+        midiClient = client
+        midiPort = port
+        reconnectMidiSources()
+        if MIDIGetNumberOfSources() == 0 { print("nordpiano: warning — no MIDI sources found") }
+    }
+
+    /// (Re)connect the selected source(s); called at start and on selection changes.
+    private func reconnectMidiSources() {
+        guard let port = midiPort else { return }
+        for s in connectedMidiSources { MIDIPortDisconnectSource(port, s) }
+        connectedMidiSources.removeAll()
+        let wanted: [MIDIEndpointRef] = selectedMidiSource == 0
+            ? (0..<MIDIGetNumberOfSources()).map { MIDIGetSource($0) }
+            : [selectedMidiSource]
+        for s in wanted where s != 0 {
+            if MIDIPortConnectSource(port, s, nil) == noErr { connectedMidiSources.insert(s) }
         }
-        if sources == 0 { print("nordpiano: warning — no MIDI sources found") }
     }
 
     private func handlePackets(_ list: UnsafePointer<MIDIPacketList>) {

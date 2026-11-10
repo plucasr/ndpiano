@@ -150,6 +150,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.gray)
+                devicesMenu
                 Button("Open…") {
                     let panel = NSOpenPanel()
                     panel.allowedContentTypes = [UTType(filenameExtension: "npno")].compactMap { $0 }
@@ -167,6 +168,32 @@ struct ContentView: View {
             }
             .padding(16)
         }
+    }
+
+    /// Audio output + MIDI input pickers (audio interfaces, keyboard controllers).
+    private var devicesMenu: some View {
+        Menu {
+            Picker("Audio Output", selection: $model.audioDeviceID) {
+                ForEach(model.audioDevices) { dev in
+                    Text(dev.name).tag(dev.id)
+                }
+            }
+            .pickerStyle(.inline)
+            Picker("MIDI Input", selection: $model.midiSourceID) {
+                ForEach(model.midiInputs) { src in
+                    Text(src.name).tag(src.id)
+                }
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Button("Refresh device list") { model.refreshDevices() }
+        } label: {
+            Image(systemName: "hifispeaker.and.appletv")
+        }
+        .menuStyle(.borderedButton)
+        .tint(.gray)
+        .onAppear { model.refreshDevices() }
+        .help("Audio output & MIDI input")
     }
 
     /// Nord-style FX row: FILTER / COMPRESSOR / REVERB.

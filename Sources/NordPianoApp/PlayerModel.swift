@@ -1,5 +1,7 @@
 import Foundation
 import SwiftUI
+import CoreAudio
+import CoreMIDI
 import NordPianoCore
 import NordPianoEngine
 
@@ -38,6 +40,33 @@ final class PlayerModel: ObservableObject {
     @Published var markers: [Int] = []
     /// Keys pressed on screen (so the keyboard shows UI touches even before voices sound).
     @Published var uiHeld: Set<Int> = []
+
+    // MARK: - Devices
+
+    @Published var audioDevices: [PianoPlayer.AudioDevice] = []
+    /// kAudioDeviceUnknown = system default output.
+    @Published var audioDeviceID: AudioDeviceID = AudioDeviceID(UserDefaults.standard.integer(forKey: "audioDeviceID")) {
+        didSet { UserDefaults.standard.set(Int(audioDeviceID), forKey: "audioDeviceID"); applyDevices() }
+    }
+    @Published var midiInputs: [PianoPlayer.MidiInput] = []
+    /// Endpoint 0 = all sources.
+    @Published var midiSourceID: MIDIEndpointRef = MIDIEndpointRef(UserDefaults.standard.integer(forKey: "midiSourceID")) {
+        didSet { UserDefaults.standard.set(Int(midiSourceID), forKey: "midiSourceID"); applyDevices() }
+    }
+
+    /// Snapshot the system's audio outputs and MIDI sources.
+    func refreshDevices() {
+        audioDevices = [PianoPlayer.AudioDevice(id: kAudioDeviceUnknown, name: "System Default")]
+            + PianoPlayer.audioOutputDevices()
+        midiInputs = [PianoPlayer.MidiInput(id: 0, name: "All Sources")] + (player?.midiInputs() ?? [])
+        if !audioDevices.contains(where: { $0.id == audioDeviceID }) { audioDeviceID = kAudioDeviceUnknown }
+        if !midiInputs.contains(where: { $0.id == midiSourceID }) { midiSourceID = 0 }
+    }
+
+    private func applyDevices() {
+        try? player?.setAudioOutputDevice(audioDeviceID)
+        player?.selectMidiSource(midiSourceID)
+    }
 
     init() {
         roots = (UserDefaults.standard.array(forKey: "libraryRoots") as? [String] ?? [])
@@ -168,6 +197,8 @@ final class PlayerModel: ObservableObject {
                     MainActor.assumeIsolated { self?.sounding = notes }
                 }
                 try player?.start()
+                refreshDevices()
+                applyDevices()
                 applyFX()
             }
             guard let player else { return }
@@ -243,11 +274,13 @@ final class PlayerModel: ObservableObject {
     @discardableResult
     private func ensureEngine() throws -> Bool {
         if player == nil {
-            player = try PianoPlayer()
+            player = PianoPlayer()
             player?.soundingNotesHandler = { [weak self] notes in
                 MainActor.assumeIsolated { self?.sounding = notes }
             }
             try player?.start()
+            refreshDevices()
+            applyDevices()
             applyFX()
             return true
         }
