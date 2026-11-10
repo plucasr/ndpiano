@@ -209,6 +209,7 @@ struct ContentView: View {
         }
         .menuStyle(.borderedButton)
         .tint(.gray)
+        .fixedSize()
         .onAppear { model.refreshDevices() }
         .help("Audio output & MIDI input")
     }

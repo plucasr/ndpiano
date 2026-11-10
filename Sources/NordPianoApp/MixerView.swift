@@ -1,8 +1,8 @@
 import SwiftUI
 import NordPianoEngine
 
-/// One mixer channel strip per selected piano: volume fader, 3-band EQ knobs
-/// (low/mid/high) and toggle+knob rows for filter, compressor and reverb.
+/// One mixer channel strip per selected piano: volume fader, 3-band EQ (low/mid/hi)
+/// and toggle+knob rows for filter, compressor and reverb.
 struct MixerView: View {
     @EnvironmentObject private var model: PlayerModel
 
@@ -21,6 +21,7 @@ struct MixerView: View {
                 .padding(.horizontal, 4)
                 .padding(.vertical, 6)
             }
+            .fixedSize(horizontal: false, vertical: true)
             .background(NordColor.card)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
@@ -47,29 +48,41 @@ private struct ChannelStrip: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(NordColor.text)
                 .lineLimit(1)
-                .frame(width: 104)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity)
 
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
                 // Volume fader
-                VSlider(value: Binding(
-                    get: { Double(model.gains[entry.url] ?? 1) },
-                    set: { model.setGain(Float($0), for: entry) }
-                ), range: 0...1.5)
-                .frame(height: 72)
+                VStack(spacing: 3) {
+                    Fader(value: Binding(
+                        get: { Double(model.gains[entry.url] ?? 1) },
+                        set: { v in model.setGain(Float(v), for: entry) }
+                    ), range: 0...1.5)
+                    Text("VOL")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundStyle(NordColor.subtext)
+                }
 
-                VStack(spacing: 4) {
-                    // 3-band EQ
-                    HStack(spacing: 8) {
-                        Knob(value: Binding(
-                            get: { fx.eqLow }, set: { v in update { $0.eqLow = v } }
-                        ), label: "LOW", range: -1...1)
-                        Knob(value: Binding(
-                            get: { fx.eqMid }, set: { v in update { $0.eqMid = v } }
-                        ), label: "MID", range: -1...1)
-                        Knob(value: Binding(
-                            get: { fx.eqHigh }, set: { v in update { $0.eqHigh = v } }
-                        ), label: "HIGH", range: -1...1)
+                // EQ + FX column
+                VStack(alignment: .leading, spacing: 6) {
+                    VStack(spacing: 2) {
+                        Text("EQ")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(NordColor.red)
+                        HStack(spacing: 12) {
+                            Knob(value: Binding(
+                                get: { fx.eqLow }, set: { v in update { $0.eqLow = v } }
+                            ), label: "low", range: -1...1)
+                            Knob(value: Binding(
+                                get: { fx.eqMid }, set: { v in update { $0.eqMid = v } }
+                            ), label: "mid", range: -1...1)
+                            Knob(value: Binding(
+                                get: { fx.eqHigh }, set: { v in update { $0.eqHigh = v } }
+                            ), label: "hi", range: -1...1)
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+
                     FxRow(label: "FILTER", isOn: Binding(
                         get: { fx.filterOn }, set: { v in update { $0.filterOn = v } }
                     ), value: Binding(
@@ -86,10 +99,13 @@ private struct ChannelStrip: View {
                         get: { fx.reverbMix }, set: { v in update { $0.reverbMix = v } }
                     ))
                 }
+                .frame(width: 118)
             }
         }
-        .padding(8)
-        .frame(width: 170)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(width: 186)
+        .fixedSize(horizontal: true, vertical: false)
         .background(NordColor.background)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(NordColor.red.opacity(0.25), lineWidth: 1))
@@ -114,11 +130,12 @@ private struct FxRow: View {
                 .toggleStyle(.checkbox)
                 .font(.system(size: 8, weight: .semibold))
                 .foregroundStyle(isOn ? NordColor.red : NordColor.subtext)
-                .frame(width: 62, alignment: .leading)
+            Spacer(minLength: 2)
             Knob(value: $value, label: "")
                 .disabled(!isOn)
                 .opacity(isOn ? 1 : 0.35)
         }
+        .frame(height: 24)
     }
 }
 
@@ -139,11 +156,11 @@ private struct Knob: View {
                 // needle: -135°…+135° across the range
                 Rectangle()
                     .fill(NordColor.red)
-                    .frame(width: 2, height: 10)
-                    .offset(y: -7)
+                    .frame(width: 2, height: 9)
+                    .offset(y: -6)
                     .rotationEffect(.degrees(-135 + 270 * normalized))
             }
-            .frame(width: 24, height: 24)
+            .frame(width: 22, height: 22)
             .contentShape(Circle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -168,15 +185,48 @@ private struct Knob: View {
     }
 }
 
-/// Vertical slider (rotated horizontal one — enough for a fader).
-private struct VSlider: View {
+/// Vertical volume fader: custom track + thumb (a rotated Slider never lays out right).
+private struct Fader: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
 
+    private var normalized: Double {
+        (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+    }
+
     var body: some View {
-        Slider(value: $value, in: range)
-            .rotationEffect(.degrees(-90))
-            .frame(width: 72, height: 20)
-            .tint(NordColor.red)
+        GeometryReader { geo in
+            let h = geo.size.height
+            let thumbY = (1 - normalized) * (h - 12) + 6
+            ZStack(alignment: .top) {
+                // track
+                Capsule()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: 4)
+                    .padding(.vertical, 6)
+                // active fill
+                Capsule()
+                    .fill(NordColor.red)
+                    .frame(width: 4, height: h - thumbY)
+                    .offset(y: thumbY)
+                // thumb
+                Circle()
+                    .fill(NordColor.red)
+                    .overlay(Circle().stroke(Color.white.opacity(0.6), lineWidth: 1))
+                    .frame(width: 12, height: 12)
+                    .position(x: geo.size.width / 2, y: thumbY)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { d in
+                        let span = range.upperBound - range.lowerBound
+                        let n = 1 - (d.location.y - 6) / max(1, h - 12)
+                        value = max(range.lowerBound, min(range.upperBound,
+                                                          range.lowerBound + n * span))
+                    }
+            )
+        }
+        .frame(width: 20, height: 84)
     }
 }
