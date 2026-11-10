@@ -35,6 +35,25 @@ case "info":
         fputs("error: \(error)\n", stderr)
         exit(1)
     }
+case "demo":
+    do {
+        let player = try PianoPlayer(bytes: bytes)
+        player.soundingNotesHandler = { notes in print("sounding: \(notes.sorted())") }
+        try player.start()
+        // Middle-C major scale, one note per second, to verify decode + render + output.
+        let seq = [60, 62, 64, 65, 67, 69, 71, 72]
+        for (i, n) in seq.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) + 1) {
+                print("noteOn \(n)")
+                player.noteOn(n, velocity: 100)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { player.noteOff(n) }
+            }
+        }
+        RunLoop.current.run()
+    } catch {
+        fputs("error: \(error)\n", stderr)
+        exit(1)
+    }
 case "play":
     do {
         let player = try PianoPlayer(bytes: bytes)

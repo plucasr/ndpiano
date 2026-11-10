@@ -6,6 +6,7 @@ struct NordPianoApp: App {
     @StateObject private var model = PlayerModel()
 
     init() {
+        setbuf(stdout, nil) // print() to a pipe/file is block-buffered otherwise
         NSApplication.shared.applicationIconImage = makeAppIcon()
     }
 

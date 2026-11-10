@@ -177,13 +177,15 @@ struct ContentView: View {
 
     /// Show/hide the on-screen keyboard (hidden = view removed, nothing renders).
     private var keyboardToggle: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) { model.showKeyboard.toggle() }
-        } label: {
+        Toggle(isOn: Binding(
+            get: { model.showKeyboard },
+            set: { newValue in
+                withAnimation(.easeInOut(duration: 0.15)) { model.showKeyboard = newValue }
+            }
+        )) {
             Image(systemName: "pianokeys")
         }
-        .buttonStyle(.bordered)
-        .tint(model.showKeyboard ? NordColor.red : .gray)
+        .toggleStyle(PillToggleStyle(onColor: NordColor.red))
         .help(model.showKeyboard ? "Hide keyboard" : "Show keyboard")
     }
 
@@ -264,9 +266,7 @@ struct ContentView: View {
     private func fxGroup<Content: View>(label: String, isOn: Binding<Bool>, @ViewBuilder content: () -> Content) -> some View {
         HStack(spacing: 8) {
             Toggle(label, isOn: isOn)
-                .toggleStyle(.checkbox)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isOn.wrappedValue ? NordColor.red : NordColor.subtext)
+                .toggleStyle(PillToggleStyle(labelBelow: true))
             content()
                 .disabled(!isOn.wrappedValue)
                 .opacity(isOn.wrappedValue ? 1 : 0.4)

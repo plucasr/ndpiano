@@ -152,12 +152,16 @@ public final class PianoPlayer {
     /// before start(); it's applied when the engine comes up.
     public func setAudioOutputDevice(_ id: AudioDeviceID) throws {
         selectedAudioDevice = id
+        guard id != kAudioDeviceUnknown else { return } // keep the system default
         guard engine.isRunning else { return }
         var dev = id
         let status = AudioUnitSetProperty(engine.outputNode.audioUnit!,
                                           kAudioOutputUnitProperty_CurrentDevice,
                                           kAudioUnitScope_Global, 0,
                                           &dev, UInt32(MemoryLayout<AudioDeviceID>.size))
+        if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
+            print("nordpiano: setAudioOutputDevice \(id) status \(status), engine running \(engine.isRunning)")
+        }
         guard status == noErr else {
             throw NSError(domain: "nordpiano", code: 4, userInfo: [NSLocalizedDescriptionKey: "can't switch audio device (\(status))"])
         }
@@ -206,6 +210,9 @@ public final class PianoPlayer {
         let idx = layers.count - 1
         if engine.isRunning { attachChannel(id: id) }
         lock.unlock()
+        if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
+            print("nordpiano: addLayer \(id.lastPathComponent), engine running \(engine.isRunning), channels \(self.channels.keys.map { $0.lastPathComponent })")
+        }
         return idx
     }
 
@@ -300,6 +307,9 @@ public final class PianoPlayer {
     // MARK: - Channel strips (per-layer source + EQ + filter + comp + reverb)
 
     private func attachChannel(id: URL) {
+        if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
+            print("nordpiano: attachChannel enter \(id.lastPathComponent), engine running \(engine.isRunning)")
+        }
         guard channels[id] == nil else { return }
         let fx = pendingFX[id] ?? LayerFX()
         let format = AVAudioFormat(standardFormatWithSampleRate: outRate, channels: 2)!
@@ -311,10 +321,16 @@ public final class PianoPlayer {
             channel.filter = try makeEffect(kAudioUnitSubType_LowPassFilter)
             channel.comp = try makeEffect(kAudioUnitSubType_DynamicsProcessor)
             channel.reverb = try makeEffect(kAudioUnitSubType_Reverb2)
-        } catch { return }
+        } catch {
+            print("nordpiano: attachChannel \(id.lastPathComponent) FAILED: \(error)")
+            return
+        }
         let units = [channel.eqLow, channel.eqMid, channel.eqHigh,
                      channel.filter, channel.comp, channel.reverb]
         for unit in units { engine.attach(unit!) }
+        if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
+            print("nordpiano: attachChannel \(id.lastPathComponent) units ok")
+        }
 
         let source = AVAudioSourceNode(format: format) { [weak self] isSilence, _, frameCount, audioBufferList -> OSStatus in
             guard let self else { return noErr }
@@ -426,7 +442,13 @@ public final class PianoPlayer {
 
     private func setupMIDI() throws {
         var client = MIDIClientRef()
-        guard MIDIClientCreateWithBlock("nordpiano" as CFString, &client, { _ in }) == noErr else {
+        guard MIDIClientCreateWithBlock("nordpiano" as CFString, &client, { [weak self] note in
+            // Re-scan connections when endpoints appear/vanish (devices attached
+            // after launch would otherwise never be connected).
+            if note.pointee.messageID == .msgObjectAdded || note.pointee.messageID == .msgObjectRemoved {
+                self?.reconnectMidiSources()
+            }
+        }) == noErr else {
             throw NSError(domain: "nordpiano", code: 1, userInfo: [NSLocalizedDescriptionKey: "MIDIClientCreate failed"])
         }
         var port = MIDIPortRef()
@@ -442,6 +464,9 @@ public final class PianoPlayer {
         midiPort = port
         reconnectMidiSources()
         if MIDIGetNumberOfSources() == 0 { print("nordpiano: warning — no MIDI sources found") }
+        if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
+            print("nordpiano: MIDI up, sources \(MIDIGetNumberOfSources()), selected \(selectedMidiSource), connected \(connectedMidiSources)")
+        }
     }
 
     /// (Re)connect the selected source(s); called at start and on selection changes.
@@ -453,7 +478,13 @@ public final class PianoPlayer {
             ? (0..<MIDIGetNumberOfSources()).map { MIDIGetSource($0) }
             : [selectedMidiSource]
         for s in wanted where s != 0 {
-            if MIDIPortConnectSource(port, s, nil) == noErr { connectedMidiSources.insert(s) }
+            let ok = MIDIPortConnectSource(port, s, nil)
+            if ok == noErr { connectedMidiSources.insert(s) }
+            if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
+                var name: Unmanaged<CFString>?
+                MIDIObjectGetStringProperty(s, kMIDIPropertyName, &name)
+                print("nordpiano: connect source \(s) \((name?.takeRetainedValue() as String?) ?? "?") -> \(ok == noErr ? "ok" : "FAIL \(ok)")")
+            }
         }
     }
 
@@ -474,6 +505,10 @@ public final class PianoPlayer {
     }
 
     private func handleMidi(bytes b: UnsafePointer<UInt8>, count: Int) {
+        if ProcessInfo.processInfo.environment["NORD_MIDI_LOG"] != nil {
+            let hex = (0..<count).map { String(format: "%02X", b[$0]) }.joined(separator: " ")
+            print("nordpiano: midi \(hex)")
+        }
         var i = 0
         var runningStatus: UInt8 = 0
         while i < count {
@@ -507,6 +542,9 @@ public final class PianoPlayer {
         lock.lock()
         let snapshot = layers
         lock.unlock()
+        if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
+            print("nordpiano: noteOn \(note) vel \(velocity), layers \(snapshot.map { $0.id.lastPathComponent }), engine running \(engine.isRunning)")
+        }
         for layer in snapshot {
             guard let key = pianoKey(layer.piano.zones, midi: note),
                   let stroke = strokeFor(layer.piano.dir, zone: key.zone, velocity: velocity) else { continue }

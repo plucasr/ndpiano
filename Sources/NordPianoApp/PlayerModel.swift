@@ -72,7 +72,11 @@ final class PlayerModel: ObservableObject {
     }
 
     private func applyDevices() {
-        try? player?.setAudioOutputDevice(audioDeviceID)
+        // kAudioDeviceUnknown means "system default" — leave the engine's output
+        // alone; pushing 0 into CurrentDevice halts a running engine.
+        if audioDeviceID != kAudioDeviceUnknown {
+            try? player?.setAudioOutputDevice(audioDeviceID)
+        }
         player?.selectMidiSource(midiSourceID)
     }
 
@@ -236,6 +240,7 @@ final class PlayerModel: ObservableObject {
             updateHeader()
         } catch {
             status = "Error: \(error)"
+            print("nordpiano: syncLayers error: \(error)")
         }
     }
 

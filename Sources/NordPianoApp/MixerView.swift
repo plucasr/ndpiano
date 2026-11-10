@@ -62,9 +62,10 @@ private struct ChannelStrip: View {
                         .font(.system(size: 7, weight: .medium))
                         .foregroundStyle(NordColor.subtext)
                 }
+                .frame(maxHeight: .infinity)
 
                 // EQ + FX column
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .trailing, spacing: 6) {
                     VStack(spacing: 2) {
                         Text("EQ")
                             .font(.system(size: 8, weight: .bold))
@@ -81,7 +82,7 @@ private struct ChannelStrip: View {
                             ), label: "hi", range: -1...1)
                         }
                     }
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
                     FxRow(label: "FILTER", isOn: Binding(
                         get: { fx.filterOn }, set: { v in update { $0.filterOn = v } }
@@ -99,13 +100,12 @@ private struct ChannelStrip: View {
                         get: { fx.reverbMix }, set: { v in update { $0.reverbMix = v } }
                     ))
                 }
-                .frame(width: 118)
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .frame(width: 186)
-        .fixedSize(horizontal: true, vertical: false)
         .background(NordColor.background)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(NordColor.red.opacity(0.25), lineWidth: 1))
@@ -125,17 +125,14 @@ private struct FxRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .top, spacing: 6) {
             Toggle(label, isOn: $isOn)
-                .toggleStyle(.checkbox)
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(isOn ? NordColor.red : NordColor.subtext)
-            Spacer(minLength: 2)
+                .toggleStyle(PillToggleStyle(labelBelow: true))
             Knob(value: $value, label: "")
                 .disabled(!isOn)
                 .opacity(isOn ? 1 : 0.35)
         }
-        .frame(height: 24)
+        .frame(height: 34)
     }
 }
 
@@ -227,6 +224,7 @@ private struct Fader: View {
                     }
             )
         }
-        .frame(width: 20, height: 84)
+        .frame(width: 20)
+        .frame(maxHeight: .infinity)
     }
 }
