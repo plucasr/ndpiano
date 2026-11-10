@@ -51,7 +51,7 @@ private struct ChannelStrip: View {
                 .truncationMode(.tail)
                 .frame(maxWidth: .infinity)
 
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: 6) {
                 // Volume fader
                 VStack(spacing: 3) {
                     Fader(value: Binding(
@@ -64,48 +64,46 @@ private struct ChannelStrip: View {
                 }
                 .frame(maxHeight: .infinity)
 
-                // EQ + FX column
-                VStack(alignment: .trailing, spacing: 6) {
-                    VStack(spacing: 2) {
-                        Text("EQ")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundStyle(NordColor.red)
-                        HStack(spacing: 12) {
-                            Knob(value: Binding(
-                                get: { fx.eqLow }, set: { v in update { $0.eqLow = v } }
-                            ), label: "low", range: -1...1)
-                            Knob(value: Binding(
-                                get: { fx.eqMid }, set: { v in update { $0.eqMid = v } }
-                            ), label: "mid", range: -1...1)
-                            Knob(value: Binding(
-                                get: { fx.eqHigh }, set: { v in update { $0.eqHigh = v } }
-                            ), label: "hi", range: -1...1)
-                        }
+                // EQ + FX column: one EQ knob per FX row, divider between.
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(spacing: 9) {
+                        Knob(value: Binding(
+                            get: { fx.eqLow }, set: { v in update { $0.eqLow = v } }
+                        ), label: "low", range: -1...1)
+                        Knob(value: Binding(
+                            get: { fx.eqMid }, set: { v in update { $0.eqMid = v } }
+                        ), label: "mid", range: -1...1)
+                        Knob(value: Binding(
+                            get: { fx.eqHigh }, set: { v in update { $0.eqHigh = v } }
+                        ), label: "hi", range: -1...1)
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                    FxRow(label: "FILTER", isOn: Binding(
-                        get: { fx.filterOn }, set: { v in update { $0.filterOn = v } }
-                    ), value: Binding(
-                        get: { fx.filterNorm }, set: { v in update { $0.filterNorm = v } }
-                    ))
-                    FxRow(label: "COMP", isOn: Binding(
-                        get: { fx.compOn }, set: { v in update { $0.compOn = v } }
-                    ), value: Binding(
-                        get: { fx.compAmount }, set: { v in update { $0.compAmount = v } }
-                    ))
-                    FxRow(label: "REVERB", isOn: Binding(
-                        get: { fx.reverbOn }, set: { v in update { $0.reverbOn = v } }
-                    ), value: Binding(
-                        get: { fx.reverbMix }, set: { v in update { $0.reverbMix = v } }
-                    ))
+                    Rectangle()
+                        .fill(NordColor.red.opacity(0.25))
+                        .frame(width: 1, height: 108)
+                    VStack(alignment: .trailing, spacing: 6) {
+                        FxRow(label: "FILTER", isOn: Binding(
+                            get: { fx.filterOn }, set: { v in update { $0.filterOn = v } }
+                        ), value: Binding(
+                            get: { fx.filterNorm }, set: { v in update { $0.filterNorm = v } }
+                        ))
+                        FxRow(label: "COMP", isOn: Binding(
+                            get: { fx.compOn }, set: { v in update { $0.compOn = v } }
+                        ), value: Binding(
+                            get: { fx.compAmount }, set: { v in update { $0.compAmount = v } }
+                        ))
+                        FxRow(label: "REVERB", isOn: Binding(
+                            get: { fx.reverbOn }, set: { v in update { $0.reverbOn = v } }
+                        ), value: Binding(
+                            get: { fx.reverbMix }, set: { v in update { $0.reverbMix = v } }
+                        ))
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .frame(width: 186)
+        .frame(width: 166)
         .background(NordColor.background)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(NordColor.red.opacity(0.25), lineWidth: 1))
