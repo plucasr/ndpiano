@@ -36,6 +36,26 @@ struct Layer {
     var piano: (bytes: [UInt8], dir: NspDirectory, zones: [NspZone])
 }
 
+/// One channel strip of the mixer: a layer's voices plus its own FX unit chain
+/// (source → low shelf → mid parametric → high shelf → low-pass → compressor → reverb → master).
+private final class Channel {
+    let id: URL
+    var voices: [Voice] = []
+    var fx: PianoPlayer.LayerFX
+    var source: AVAudioSourceNode?
+    var eqLow: AVAudioUnit?
+    var eqMid: AVAudioUnit?
+    var eqHigh: AVAudioUnit?
+    var filter: AVAudioUnit?
+    var comp: AVAudioUnit?
+    var reverb: AVAudioUnit?
+
+    init(id: URL, fx: PianoPlayer.LayerFX) {
+        self.id = id
+        self.fx = fx
+    }
+}
+
 /// Polyphonic player: decoded NSP strokes through AVAudioEngine (CoreAudio), MIDI in via
 /// CoreMIDI. Local audition only — factory pianos are Clavia's audio; never extract or share.
 public final class PianoPlayer {
@@ -48,9 +68,12 @@ public final class PianoPlayer {
 
     private let engine = AVAudioEngine()
     private let lock = NSLock()
-    private var voices: [Voice] = []
+    private var channels: [URL: Channel] = [:]
     private var sustainPedal = false
     private var outRate: Double = 44_100
+
+    /// FX settings for layers that have no channel yet (engine not started).
+    private var pendingFX: [URL: LayerFX] = [:]
 
     private var filterUnit: AVAudioUnit?
     private var compUnit: AVAudioUnit?
@@ -59,6 +82,20 @@ public final class PianoPlayer {
     var onSoundingNotes: (@Sendable (Set<Int>) -> Void)?
 
     // MARK: - Devices
+
+    /// Per-layer FX settings (all normalized 0…1 except EQ, which is −1…1 → ±12 dB).
+    public struct LayerFX: Equatable, Codable {
+        public var filterOn = false
+        public var filterNorm: Double = 1
+        public var compOn = false
+        public var compAmount: Double = 0.3
+        public var reverbOn = false
+        public var reverbMix: Double = 0.2
+        public var eqLow: Double = 0
+        public var eqMid: Double = 0
+        public var eqHigh: Double = 0
+        public init() {}
+    }
 
     /// One CoreAudio output device (audio interface / built-in).
     public struct AudioDevice: Identifiable, Equatable {
@@ -167,6 +204,7 @@ public final class PianoPlayer {
         lock.lock()
         layers.append(Layer(id: id, gain: gain, piano: (bytes: bytes, dir: dir, zones: zones)))
         let idx = layers.count - 1
+        if engine.isRunning { attachChannel(id: id) }
         lock.unlock()
         return idx
     }
@@ -180,6 +218,8 @@ public final class PianoPlayer {
     public func removeLayer(id: URL) {
         lock.lock()
         layers.removeAll { $0.id == id }
+        if engine.isRunning { detachChannel(id: id) }
+        channels[id] = nil
         lock.unlock()
     }
 
@@ -196,44 +236,20 @@ public final class PianoPlayer {
         outRate = engine.outputNode.inputFormat(forBus: 0).sampleRate
         let format = AVAudioFormat(standardFormatWithSampleRate: outRate, channels: 2)!
 
-        let source = AVAudioSourceNode(format: format) { [weak self] isSilence, _, frameCount, audioBufferList -> OSStatus in
-            guard let self else { return noErr }
-            let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
-            guard abl.count >= 2,
-                  let outL = abl[0].mData?.assumingMemoryBound(to: Float.self),
-                  let outR = abl[1].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
-            self.render(intoL: outL, r: outR, frames: Int(frameCount))
-            isSilence.pointee = false
-            return noErr
-        }
-        engine.attach(source)
-
-        // FX insert units, created synchronously (they're on-disk Apple units — fast).
-        func makeEffect(_ subtype: OSType) throws -> AVAudioUnit {
-            let desc = AudioComponentDescription(componentType: kAudioUnitType_Effect,
-                                                 componentSubType: subtype,
-                                                 componentManufacturer: kAudioUnitManufacturer_Apple,
-                                                 componentFlags: 0, componentFlagsMask: 0)
-            var result: AVAudioUnit?
-            var error: Error?
-            let sem = DispatchSemaphore(value: 0)
-            AVAudioUnit.instantiate(with: desc, options: []) { unit, err in
-                result = unit; error = err; sem.signal()
-            }
-            sem.wait()
-            if let error { throw error }
-            guard let result else { throw NSError(domain: "nordpiano", code: 3) }
-            return result
-        }
+        // Master bus FX: mainMixer → low-pass → compressor → reverb → output.
         filterUnit = try makeEffect(kAudioUnitSubType_LowPassFilter)
         compUnit = try makeEffect(kAudioUnitSubType_DynamicsProcessor)
         reverbUnit = try makeEffect(kAudioUnitSubType_Reverb2)
         for unit in [filterUnit, compUnit, reverbUnit] { engine.attach(unit!) }
-
-        engine.connect(source, to: filterUnit!, format: format)
+        engine.disconnectNodeOutput(engine.mainMixerNode) // drop the implicit mixer→output
+        engine.connect(engine.mainMixerNode, to: filterUnit!, format: format)
         engine.connect(filterUnit!, to: compUnit!, format: format)
         engine.connect(compUnit!, to: reverbUnit!, format: format)
-        engine.connect(reverbUnit!, to: engine.mainMixerNode, format: format)
+        engine.connect(reverbUnit!, to: engine.outputNode, format: format)
+
+        // One channel strip per layer.
+        for layer in layers { attachChannel(id: layer.id) }
+
         try engine.start()
 
         // Defaults: everything neutral/bypassed.
@@ -261,6 +277,120 @@ public final class PianoPlayer {
         var flag = bypass
         AudioUnitSetProperty(unit.audioUnit, kAudioUnitProperty_BypassEffect,
                              kAudioUnitScope_Global, 0, &flag, UInt32(MemoryLayout.size(ofValue: flag)))
+    }
+
+    /// FX insert unit, created synchronously (on-disk Apple units — fast).
+    private func makeEffect(_ subtype: OSType) throws -> AVAudioUnit {
+        let desc = AudioComponentDescription(componentType: kAudioUnitType_Effect,
+                                             componentSubType: subtype,
+                                             componentManufacturer: kAudioUnitManufacturer_Apple,
+                                             componentFlags: 0, componentFlagsMask: 0)
+        var result: AVAudioUnit?
+        var error: Error?
+        let sem = DispatchSemaphore(value: 0)
+        AVAudioUnit.instantiate(with: desc, options: []) { unit, err in
+            result = unit; error = err; sem.signal()
+        }
+        sem.wait()
+        if let error { throw error }
+        guard let result else { throw NSError(domain: "nordpiano", code: 3) }
+        return result
+    }
+
+    // MARK: - Channel strips (per-layer source + EQ + filter + comp + reverb)
+
+    private func attachChannel(id: URL) {
+        guard channels[id] == nil else { return }
+        let fx = pendingFX[id] ?? LayerFX()
+        let format = AVAudioFormat(standardFormatWithSampleRate: outRate, channels: 2)!
+        let channel = Channel(id: id, fx: fx)
+        do {
+            channel.eqLow = try makeEffect(kAudioUnitSubType_LowShelfFilter)
+            channel.eqMid = try makeEffect(kAudioUnitSubType_ParametricEQ)
+            channel.eqHigh = try makeEffect(kAudioUnitSubType_HighShelfFilter)
+            channel.filter = try makeEffect(kAudioUnitSubType_LowPassFilter)
+            channel.comp = try makeEffect(kAudioUnitSubType_DynamicsProcessor)
+            channel.reverb = try makeEffect(kAudioUnitSubType_Reverb2)
+        } catch { return }
+        let units = [channel.eqLow, channel.eqMid, channel.eqHigh,
+                     channel.filter, channel.comp, channel.reverb]
+        for unit in units { engine.attach(unit!) }
+
+        let source = AVAudioSourceNode(format: format) { [weak self] isSilence, _, frameCount, audioBufferList -> OSStatus in
+            guard let self else { return noErr }
+            let abl = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            guard abl.count >= 2,
+                  let outL = abl[0].mData?.assumingMemoryBound(to: Float.self),
+                  let outR = abl[1].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+            self.render(channelID: id, intoL: outL, r: outR, frames: Int(frameCount))
+            isSilence.pointee = false
+            return noErr
+        }
+        channel.source = source
+        engine.attach(source)
+        engine.connect(source, to: channel.eqLow!, format: format)
+        engine.connect(channel.eqLow!, to: channel.eqMid!, format: format)
+        engine.connect(channel.eqMid!, to: channel.eqHigh!, format: format)
+        engine.connect(channel.eqHigh!, to: channel.filter!, format: format)
+        engine.connect(channel.filter!, to: channel.comp!, format: format)
+        engine.connect(channel.comp!, to: channel.reverb!, format: format)
+        engine.connect(channel.reverb!, to: engine.mainMixerNode, format: format)
+        channels[id] = channel
+        applyChannelFX(channel)
+    }
+
+    private func detachChannel(id: URL) {
+        guard let channel = channels[id] else { return }
+        let nodes: [AVAudioNode] = [channel.source, channel.eqLow, channel.eqMid, channel.eqHigh,
+                                    channel.filter, channel.comp, channel.reverb].compactMap { $0 }
+        for node in nodes { engine.disconnectNodeInput(node); engine.disconnectNodeOutput(node) }
+        for node in nodes { engine.detach(node) }
+        channels[id] = nil
+    }
+
+    /// Per-layer FX: EQ shelves/peaking, filter, compressor, reverb. All bypassed when off/flat.
+    public func setLayerFX(_ fx: LayerFX, id: URL) {
+        lock.lock()
+        pendingFX[id] = fx
+        if let channel = channels[id] {
+            channel.fx = fx
+            applyChannelFX(channel)
+        }
+        lock.unlock()
+    }
+
+    public func layerFX(id: URL) -> LayerFX {
+        lock.lock(); defer { lock.unlock() }
+        return channels[id]?.fx ?? pendingFX[id] ?? LayerFX()
+    }
+
+    private func applyChannelFX(_ channel: Channel) {
+        let fx = channel.fx
+        let db = { (v: Double) in AUValue(v * 12) } // −1…1 → ±12 dB
+        // 3-band EQ: low shelf @200 Hz, mid parametric @1 kHz, high shelf @6 kHz.
+        param(channel.eqLow, "gain")?.value = db(fx.eqLow)
+        param(channel.eqLow, "cutoff")?.value = 200
+        setBypass(channel.eqLow, fx.eqLow == 0)
+        param(channel.eqMid, "center")?.value = 1_000
+        param(channel.eqMid, "q")?.value = 0.8
+        param(channel.eqMid, "gain")?.value = db(fx.eqMid)
+        setBypass(channel.eqMid, fx.eqMid == 0)
+        param(channel.eqHigh, "gain")?.value = db(fx.eqHigh)
+        param(channel.eqHigh, "cutoff")?.value = 6_000
+        setBypass(channel.eqHigh, fx.eqHigh == 0)
+        // Filter / compressor / reverb mirror the master-bus mappings.
+        param(channel.filter, "cutoff")?.value = AUValue(min(18_000, max(20, 200 * pow(90, fx.filterNorm))))
+        setBypass(channel.filter, !fx.filterOn)
+        let a = min(1, max(0, fx.compAmount))
+        param(channel.comp, "threshold")?.value = AUValue(-45 * a)
+        param(channel.comp, "attack")?.value = 5
+        param(channel.comp, "release")?.value = 250
+        param(channel.comp, "headroom")?.value = 8
+        param(channel.comp, "masterGain")?.value = AUValue(3 * a)
+        setBypass(channel.comp, !fx.compOn || a <= 0)
+        param(channel.reverb, "wetDry")?.value = AUValue(min(1, max(0, fx.reverbMix)) * 100)
+        param(channel.reverb, "decay")?.value = 1.8
+        setBypass(channel.reverb, !fx.reverbOn)
     }
 
     /// FILTER knob: 20 Hz…18 kHz. `enabled` is the Nord-style on/off.
@@ -384,11 +514,6 @@ public final class PianoPlayer {
                           rootKey: layer.piano.zones[key.zone].rootNote + Nsp.rootOffset)
 
             let gain = Float(pow(10, -touchAttenuation(velocity) / 100)) * mixHeadroom * layer.gain
-            lock.lock()
-            if voices.count >= maxVoices, let idx = voices.firstIndex(where: { !$0.sustained && !$0.releasing }) {
-                voices[idx].releasing = true
-                voices[idx].env = 0 // stolen
-            }
             var v = Voice(pcm: picked.stroke.pcm, rate: 1, gain: gain, note: note)
             let semitones = Double(note - picked.rootKey)
             v.rate = pow(2, semitones / 12) * (picked.stroke.sampleRate / outRate)
@@ -401,15 +526,28 @@ public final class PianoPlayer {
                     v.loopDecayPerFrame = Float(pow(10, -db / 20 * (v.rate / picked.stroke.sampleRate)))
                 }
             }
-            voices.append(v)
+            lock.lock()
+            let channel = channels[layer.id] ?? {
+                let ch = Channel(id: layer.id, fx: pendingFX[layer.id] ?? LayerFX())
+                channels[layer.id] = ch
+                return ch
+            }()
+            if channel.voices.count >= maxVoices,
+               let idx = channel.voices.firstIndex(where: { !$0.sustained && !$0.releasing }) {
+                channel.voices[idx].releasing = true
+                channel.voices[idx].env = 0 // stolen
+            }
+            channel.voices.append(v)
             lock.unlock()
         }
     }
 
     public func noteOff(_ note: Int) {
         lock.lock()
-        for i in voices.indices where voices[i].note == note && !voices[i].releasing {
-            if sustainPedal { voices[i].sustained = true } else { voices[i].releasing = true }
+        for channel in channels.values {
+            for i in channel.voices.indices where channel.voices[i].note == note && !channel.voices[i].releasing {
+                if sustainPedal { channel.voices[i].sustained = true } else { channel.voices[i].releasing = true }
+            }
         }
         lock.unlock()
     }
@@ -418,9 +556,11 @@ public final class PianoPlayer {
         lock.lock()
         sustainPedal = down
         if !down {
-            for i in voices.indices where voices[i].sustained {
-                voices[i].sustained = false
-                voices[i].releasing = true
+            for channel in channels.values {
+                for i in channel.voices.indices where channel.voices[i].sustained {
+                    channel.voices[i].sustained = false
+                    channel.voices[i].releasing = true
+                }
             }
         }
         lock.unlock()
@@ -442,14 +582,36 @@ public final class PianoPlayer {
         return result
     }
 
-    // MARK: - Render (audio thread)
+    // MARK: - Render (audio thread, one source-node callback per channel)
 
-    private func render(intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
+    private func render(channelID: URL, intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
         lock.lock()
-        var active = voices
-        voices.removeAll(keepingCapacity: true)
+        guard let channel = channels[channelID] else { lock.unlock(); return }
+        var active = channel.voices
+        channel.voices.removeAll(keepingCapacity: true)
         lock.unlock()
 
+        let (keep, notes) = renderVoices(&active, intoL: outL, r: outR, frames: frames)
+
+        lock.lock()
+        if let channel = channels[channelID] {
+            channel.voices.append(contentsOf: keep)
+        }
+        // Aggregate across channels; notify only when the sounding set changes.
+        var all: Set<Int> = []
+        for ch in channels.values { all.formUnion(ch.voices.map(\.note)) }
+        let changed = all != lastSounding
+        if changed { lastSounding = all }
+        lock.unlock()
+
+        if changed {
+            let handler = onSoundingNotes
+            DispatchQueue.main.async { handler?(all) }
+        }
+    }
+
+    /// Mix one block of voices into the output. Returns the surviving voices and their notes.
+    private func renderVoices(_ active: inout [Voice], intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) -> (keep: [Voice], notes: Set<Int>) {
         let releaseStep = Float(exp(-1 / (releaseTau * outRate)))
         var keep: [Voice] = []
         keep.reserveCapacity(active.count)
@@ -496,17 +658,7 @@ public final class PianoPlayer {
             }
             if alive { keep.append(v) }
         }
-
-        lock.lock()
-        voices.append(contentsOf: keep)
-        lock.unlock()
-
-        let notes = Set(keep.map(\.note))
-        if notes != lastSounding {
-            lastSounding = notes
-            let handler = onSoundingNotes
-            DispatchQueue.main.async { handler?(notes) }
-        }
+        return (keep, Set(keep.map(\.note)))
     }
 }
 

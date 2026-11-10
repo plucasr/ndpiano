@@ -25,6 +25,10 @@ final class PlayerModel: ObservableObject {
     @Published var library: [PianoEntry] = []
     @Published var selected: Set<PianoEntry> = []
     @Published var gains: [URL: Float] = [:]
+    /// Per-layer mixer settings (EQ/filter/comp/reverb), keyed by layer URL, persisted.
+    @Published var layerFX: [URL: PianoPlayer.LayerFX] = [:] {
+        didSet { persistLayerFX() }
+    }
     @Published var favorites: [PianoEntry] = []
     /// Show the on-screen keyboard; hidden removes the view entirely (no rendering at all).
     @Published var showKeyboard: Bool = UserDefaults.standard.object(forKey: "showKeyboard") as? Bool ?? true {
@@ -81,7 +85,22 @@ final class PlayerModel: ObservableObject {
                 return PianoEntry(url: URL(fileURLWithPath: path), name: d["name"] ?? "Piano",
                                   version: d["version"] ?? "", folder: "")
             }
+        if let data = UserDefaults.standard.data(forKey: "layerFX"),
+           let saved = try? JSONDecoder().decode([String: PianoPlayer.LayerFX].self, from: data) {
+            layerFX = Dictionary(uniqueKeysWithValues: saved.map { (URL(fileURLWithPath: $0.key), $0.value) })
+        }
         rescan()
+    }
+
+    private func persistLayerFX() {
+        let dict = Dictionary(uniqueKeysWithValues: layerFX.map { ($0.key.path, $0.value) })
+        UserDefaults.standard.set(try? JSONEncoder().encode(dict), forKey: "layerFX")
+    }
+
+    /// Mixer strip change: EQ, filter, compressor or reverb of one layer.
+    func setLayerFX(_ fx: PianoPlayer.LayerFX, for url: URL) {
+        layerFX[url] = fx
+        player?.setLayerFX(fx, id: url)
     }
 
     /// Read just enough of a file for its identity — pianos are tens of MB.
@@ -211,6 +230,7 @@ final class PlayerModel: ObservableObject {
             for url in wanted.subtracting(have) {
                 let data = try Data(contentsOf: url)
                 try player.addLayer(bytes: [UInt8](data), id: url, gain: gains[url] ?? 1)
+                player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: url)
             }
             for url in have.subtracting(wanted) { player.removeLayer(id: url) }
             updateHeader()
@@ -264,6 +284,7 @@ final class PlayerModel: ObservableObject {
         do {
             let data = try Data(contentsOf: url)
             try player.addLayer(bytes: [UInt8](data), id: url)
+            player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: url)
         } catch {
             status = "Error: \(error)"
             return

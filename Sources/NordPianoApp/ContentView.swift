@@ -162,6 +162,7 @@ struct ContentView: View {
                 .tint(NordColor.red)
             }
             fxStrip
+            MixerView()
             if model.showKeyboard {
                 KeyboardView()
                     .frame(height: 190)
