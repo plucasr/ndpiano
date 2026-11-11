@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141416"/>
+      <stop offset="1" stop-color="#0a0a0b"/>
+    </linearGradient>
+    <linearGradient id="key" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d8d8da"/>
+    </linearGradient>
+    <linearGradient id="redkey" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff2333"/>
+      <stop offset="1" stop-color="#b3000f"/>
+    </linearGradient>
+    <linearGradient id="fadeL" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#DA0012" stop-opacity="0"/>
+      <stop offset="1" stop-color="#DA0012" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="fadeR" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#DA0012" stop-opacity="1"/>
+      <stop offset="1" stop-color="#DA0012" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="400" fill="url(#bg)"/>
+
+  <!-- waveform bars -->
+  <g fill="url(#fadeL)">
+    <rect x="60"  y="150" width="4" height="40"/>
+    <rect x="80"  y="130" width="4" height="80"/>
+    <rect x="100" y="110" width="4" height="120"/>
+    <rect x="120" y="140" width="4" height="60"/>
+    <rect x="140" y="95"  width="4" height="150"/>
+    <rect x="160" y="125" width="4" height="90"/>
+    <rect x="180" y="145" width="4" height="50"/>
+    <rect x="200" y="118" width="4" height="104"/>
+    <rect x="220" y="140" width="4" height="60"/>
+    <rect x="240" y="155" width="4" height="30"/>
+  </g>
+  <g fill="url(#fadeR)">
+    <rect x="956"  y="155" width="4" height="30"/>
+    <rect x="976"  y="140" width="4" height="60"/>
+    <rect x="996"  y="118" width="4" height="104"/>
+    <rect x="1016" y="145" width="4" height="50"/>
+    <rect x="1036" y="125" width="4" height="90"/>
+    <rect x="1056" y="95"  width="4" height="150"/>
+    <rect x="1076" y="140" width="4" height="60"/>
+    <rect x="1096" y="110" width="4" height="120"/>
+    <rect x="1116" y="130" width="4" height="80"/>
+    <rect x="1136" y="150" width="4" height="40"/>
+  </g>
+
+  <!-- title -->
+  <text x="600" y="150" text-anchor="middle" font-size="88" font-weight="700" fill="#ffffff" letter-spacing="2">Nord<tspan fill="#DA0012">Piano</tspan></text>
+  <text x="600" y="196" text-anchor="middle" font-size="24" fill="#ffffff" opacity="0.55" letter-spacing="6">A NORD PIANO LIBRARY PLAYER FOR MACOS</text>
+
+  <!-- red accent line -->
+  <rect x="0" y="236" width="1200" height="4" fill="#DA0012"/>
+
+  <!-- keyboard: 10 white keys starting x=250, red key on middle C -->
+  <g stroke="#0a0a0b" stroke-width="2">
+    <rect x="250" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="320" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="390" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="460" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="530" y="240" width="68" height="140" rx="4" fill="url(#redkey)" stroke="none"/>
+    <rect x="600" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="670" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="740" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="810" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+    <rect x="880" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+  </g>
+  <g fill="#0c0c0d">
+    <rect x="296" y="240" width="48" height="88" rx="3"/>
+    <rect x="366" y="240" width="48" height="88" rx="3"/>
+    <rect x="506" y="240" width="48" height="88" rx="3"/>
+    <rect x="576" y="240" width="48" height="88" rx="3"/>
+    <rect x="646" y="240" width="48" height="88" rx="3"/>
+    <rect x="786" y="240" width="48" height="88" rx="3"/>
+    <rect x="856" y="240" width="48" height="88" rx="3"/>
+  </g>
+</svg>

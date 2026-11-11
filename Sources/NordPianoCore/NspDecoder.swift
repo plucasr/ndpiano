@@ -273,6 +273,12 @@ public func strokeFor(_ dir: NspDirectory, zone: Int, velocity: Int, selectOffse
     return pick
 }
 
+/// The key-release stroke of a zone (flags == 2), if the piano ships one —
+/// played one-shot on note-off for the hammer-fall character.
+public func releaseStrokeFor(_ dir: NspDirectory, zone: Int) -> NspStroke? {
+    dir.strokes.first { $0.zone == zone && $0.release }
+}
+
 // MARK: - Key map (nsp.ts)
 
 private let keymapOffset = 0x8c
