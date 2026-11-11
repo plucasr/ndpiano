@@ -12,8 +12,12 @@ Ground-truth SVG render saved at `ground-truth.png` (regenerate with
   via a path transform (`flip` / `toDevice`), NOT via `ctx.translate/scale`.
 - Builds OK; iconset + icns build OK:
   `swift icon.swift /tmp/nordpiano.iconset && iconutil -c icns /tmp/nordpiano.iconset -o /tmp/nordpiano.icns`
-- The icns has NOT yet been installed into `dist/NordPiano.app` (no .icns was found in the
-  app bundle; check how the app normally gets its icon — that step is still todo).
+- DONE 2026-11-10: icns generated from the SVG (identical geometry to
+  `icon-work/icon.svg`) and installed at `dist/NordPiano.app/Contents/Resources/AppIcon.icns`
+  (Info.plist already declared `CFBundleIconFile = AppIcon.icns`). Verified via
+  `qlmanage` thumbnail against the artwork. Note: `Sources/NordPianoApp/AppIcon.swift`
+  still draws its own approximate icon at runtime — consider replacing it with the
+  faithful `drawIcon` port if the runtime path is still used.
 
 ## Key lessons learned (don't rediscover these)
 1. **Root-cause bug was context pooling**: the old code mutated the CTM inside
