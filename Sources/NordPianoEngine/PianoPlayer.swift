@@ -92,6 +92,9 @@ public final class PianoPlayer {
     private var masterGain: Float = 1
     /// Extra "PA punch" boost in linear amplitude (1 = unity), from setMasterBoost dB.
     private var boostLinear: Float = 1
+    /// Key-release sample level, multiplied by the released voice's effective
+    /// gain (0.5 = default, 0 = release samples silent).
+    private var releaseGainScale: Float = 0.5
 
     /// FX settings for layers that have no channel yet (engine not started).
     private var pendingFX: [URL: LayerFX] = [:]
@@ -710,12 +713,16 @@ public final class PianoPlayer {
         // velocity notion). Skipped while the pedal holds the note.
         guard !sustainPedal else { return }
         lock.lock()
+        // Level follows the released voice's CURRENT effective gain (touch gain ×
+        // envelope × any loop decay), not the note-on's initial gain — a note held
+        // long enough to decay gets a proportionally quieter release thump.
         let releasedGain = channels.values.flatMap(\.voices)
             .filter { $0.note == note && $0.releasing }
-            .map(\.gain).max()
+            .map { $0.gain * $0.env }.max()
+        let scale = releaseGainScale
         lock.unlock()
         guard let releasedGain else { return }
-        noteOnRelease(note, gain: releasedGain * 0.5)
+        noteOnRelease(note, gain: releasedGain * scale)
     }
 
     /// Spawn the key-release stroke for `note` as a one-shot voice on each piano layer.
@@ -766,6 +773,14 @@ public final class PianoPlayer {
     public func setMasterBoost(dB: Float) {
         lock.lock()
         boostLinear = pow(10, min(12, max(0, dB)) / 20)
+        lock.unlock()
+    }
+
+    /// Key-release sample level 0…1, multiplies the released voice's effective
+    /// gain (0.5 default, 0 mutes release samples entirely).
+    public func setReleaseGain(_ scale: Float) {
+        lock.lock()
+        releaseGainScale = min(1, max(0, scale))
         lock.unlock()
     }
 
