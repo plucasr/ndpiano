@@ -25,7 +25,9 @@ private struct Voice {
 struct CachedStroke {
     var pcm: [[Float]]
     var sampleRate: Double
-    var loopStart: Int? // nil = one-shot; loop runs to the end of the audio
+    /// Sustain loop in frames; nil = one-shot. `start + length` may be shorter
+    /// than the audio (a post-loop tail exists).
+    var loop: (start: Int, length: Int)?
     var decayDbPerSecond: Double
 }
 
@@ -241,6 +243,7 @@ public final class PianoPlayer {
         // Engine graph mutation outside the lock: detach/connect can block on the
         // render thread, and the render callback takes this same lock.
         if engine.isRunning { attachChannel(id: id) }
+        prewarm(idx)
         if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
             print("nordpiano: addLayer \(id.lastPathComponent), engine running \(engine.isRunning), channels \(self.channels.keys.map { $0.lastPathComponent })")
         }
@@ -261,7 +264,29 @@ public final class PianoPlayer {
         let idx = layers.count - 1
         lock.unlock()
         if engine.isRunning { attachChannel(id: id) }
+        prewarm(idx)
         return idx
+    }
+
+    /// Decode every stroke of a freshly added layer on a background queue, so the
+    /// first note in a zone doesn't pay the decode cost on the MIDI thread.
+    /// The caches are lock-guarded; concurrent note-on decodes reuse them.
+    private func prewarm(_ idx: Int) {
+        lock.lock()
+        guard idx < layers.count else { lock.unlock(); return }
+        let layer = layers[idx]
+        lock.unlock()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            switch layer.source {
+            case .piano(let bytes, let dir, _):
+                for stroke in dir.strokes {
+                    _ = self.cachedOrDecodePiano(layer, stroke, bytes: bytes, dir: dir)
+                }
+            case .sample(let bytes, _):
+                _ = self.cachedOrDecodeSample(layer, bytes: bytes)
+            }
+        }
     }
 
     /// MIDI notes of recorded samples across layers (keyboard markers). Sample zones
@@ -647,10 +672,10 @@ public final class PianoPlayer {
             var v = Voice(pcm: picked.stroke.pcm, rate: 1, gain: gain, note: note)
             let semitones = Double(note - picked.rootKey)
             v.rate = pow(2, semitones / 12) * (picked.stroke.sampleRate / outRate)
-            if let loopStart = picked.stroke.loopStart {
+            if let loop = picked.stroke.loop {
                 v.hasLoop = true
-                v.loopStart = Double(loopStart)
-                v.loopEnd = Double(picked.stroke.pcm[0].count)
+                v.loopStart = Double(loop.start)
+                v.loopEnd = Double(loop.start + loop.length)
                 let db = picked.stroke.decayDbPerSecond
                 if db > 0 {
                     v.loopDecayPerFrame = Float(pow(10, -db / 20 * (v.rate / picked.stroke.sampleRate)))
@@ -680,6 +705,39 @@ public final class PianoPlayer {
             }
         }
         lock.unlock()
+        // Key-release sample: the zone's flags==2 stroke, one-shot, riding on the
+        // touch gain of the loudest just-released voice (the file has no release
+        // velocity notion). Skipped while the pedal holds the note.
+        guard !sustainPedal else { return }
+        lock.lock()
+        let releasedGain = channels.values.flatMap(\.voices)
+            .filter { $0.note == note && $0.releasing }
+            .map(\.gain).max()
+        lock.unlock()
+        guard let releasedGain else { return }
+        noteOnRelease(note, gain: releasedGain * 0.5)
+    }
+
+    /// Spawn the key-release stroke for `note` as a one-shot voice on each piano layer.
+    private func noteOnRelease(_ note: Int, gain: Float) {
+        lock.lock()
+        let snapshot = layers
+        lock.unlock()
+        for layer in snapshot {
+            if layer.muted { continue }
+            guard case .piano(let bytes, let dir, let zones) = layer.source,
+                  let key = pianoKey(zones, midi: note),
+                  let stroke = releaseStrokeFor(dir, zone: key.zone) else { continue }
+            let cached = cachedOrDecodePiano(layer, stroke, bytes: bytes, dir: dir)
+            var v = Voice(pcm: cached.pcm, rate: 1, gain: gain, note: note)
+            let semitones = Double(note - zones[key.zone].rootNote - Nsp.rootOffset)
+            v.rate = pow(2, semitones / 12) * (cached.sampleRate / outRate)
+            lock.lock()
+            if let channel = channels[layer.id] {
+                channel.voices.append(v)
+            }
+            lock.unlock()
+        }
     }
 
     public func sustain(_ down: Bool) {
@@ -735,9 +793,15 @@ public final class PianoPlayer {
         if let cached { return cached }
         let decoded = (try? decodeNspStroke(bytes, dir: dir, stroke: stroke)) ?? []
         let pcm = decoded.map { ch in ch.map { Float($0) / 32768 } }
+        // Piano files store loop decay as a linear multiplier applied Nsp.envelopeRate
+        // times a second; convert to dB/s the render loop expects (0 = hold forever).
+        var decayDbPerSecond = 0.0
+        if let decay = stroke.loopDecay, decay > 0, decay < 1 {
+            decayDbPerSecond = -20 * log10(decay) * Double(Nsp.envelopeRate)
+        }
         let result = CachedStroke(pcm: pcm, sampleRate: Double(Nsp.sampleRate),
-                                  loopStart: stroke.loop.map { $0.start },
-                                  decayDbPerSecond: 0)
+                                  loop: stroke.loop,
+                                  decayDbPerSecond: decayDbPerSecond)
         lock.lock()
         if let idx = layers.firstIndex(where: { $0.id == layer.id }) {
             layers[idx].cache[stroke.index] = result
@@ -758,7 +822,7 @@ public final class PianoPlayer {
             byID[Int(s.globalID)] = CachedStroke(
                 pcm: item.channels.map { ch in ch.map { Float($0) / 32768 } },
                 sampleRate: Double(s.sampleRate),
-                loopStart: s.loop?.start,
+                loop: s.loop,
                 decayDbPerSecond: s.loopDecayDbPerSecond)
         }
         lock.lock()
