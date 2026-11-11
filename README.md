@@ -1,11 +1,24 @@
 <p align="center">
-  <img src="hero.svg" alt="NordPiano" width="100%">
+  <img src="hero.svg" alt="ndpiano" width="100%">
 </p>
 
 <p align="center">
   A native macOS player for Nord Piano (<code>.npno</code>) and Nord Sample (<code>.nsmp3</code>/<code>.nsmp4</code>) libraries.<br>
   Plug in a MIDI keyboard and play your Nord sounds without the Nord.
 </p>
+
+> **Personal project.** This is a hobby project I built for myself, shared in the open
+> in case it helps other Nord owners. **There is no commercial intent** — it is not
+> for sale, there are no plans, payments, or analytics, and it never will have any.
+>
+> **Not affiliated with or endorsed by Clavia / Nord.** "Nord", "Nord Piano", and
+> related names are trademarks of Clavia DMI AB. The factory piano and sample
+> libraries remain Clavia's audio property: this tool only *decodes, on your own
+> machine, files you already own* — it never extracts, converts, or distributes
+> them, and you should not either.
+>
+> The decoder is a Swift port of [OpenNord](https://github.com/simonflore/opennord)'s readers
+> (AGPL-3.0), which is why this project is AGPL-3.0 as well.
 
 ---
 

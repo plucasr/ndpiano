@@ -1,82 +1,59 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#141416"/>
-      <stop offset="1" stop-color="#0a0a0b"/>
+      <stop offset="0" stop-color="#17171a"/>
+      <stop offset="1" stop-color="#0b0b0d"/>
     </linearGradient>
-    <linearGradient id="key" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="white" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#d8d8da"/>
+      <stop offset="1" stop-color="#e8e8ea"/>
     </linearGradient>
-    <linearGradient id="redkey" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ff2333"/>
-      <stop offset="1" stop-color="#b3000f"/>
-    </linearGradient>
-    <linearGradient id="fadeL" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#DA0012" stop-opacity="0"/>
-      <stop offset="1" stop-color="#DA0012" stop-opacity="1"/>
-    </linearGradient>
-    <linearGradient id="fadeR" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#DA0012" stop-opacity="1"/>
-      <stop offset="1" stop-color="#DA0012" stop-opacity="0"/>
+    <linearGradient id="redPillar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff1a1a"/>
+      <stop offset="1" stop-color="#b30000"/>
     </linearGradient>
   </defs>
 
-  <rect width="1200" height="400" fill="url(#bg)"/>
+  <rect width="1200" height="420" fill="url(#bg)"/>
 
-  <!-- waveform bars -->
-  <g fill="url(#fadeL)">
-    <rect x="60"  y="150" width="4" height="40"/>
-    <rect x="80"  y="130" width="4" height="80"/>
-    <rect x="100" y="110" width="4" height="120"/>
-    <rect x="120" y="140" width="4" height="60"/>
-    <rect x="140" y="95"  width="4" height="150"/>
-    <rect x="160" y="125" width="4" height="90"/>
-    <rect x="180" y="145" width="4" height="50"/>
-    <rect x="200" y="118" width="4" height="104"/>
-    <rect x="220" y="140" width="4" height="60"/>
-    <rect x="240" y="155" width="4" height="30"/>
-  </g>
-  <g fill="url(#fadeR)">
-    <rect x="956"  y="155" width="4" height="30"/>
-    <rect x="976"  y="140" width="4" height="60"/>
-    <rect x="996"  y="118" width="4" height="104"/>
-    <rect x="1016" y="145" width="4" height="50"/>
-    <rect x="1036" y="125" width="4" height="90"/>
-    <rect x="1056" y="95"  width="4" height="150"/>
-    <rect x="1076" y="140" width="4" height="60"/>
-    <rect x="1096" y="110" width="4" height="120"/>
-    <rect x="1116" y="130" width="4" height="80"/>
-    <rect x="1136" y="150" width="4" height="40"/>
+  <!-- faint top hairline, nord-red -->
+  <rect x="0" y="0" width="1200" height="3" fill="#E60000" opacity="0.9"/>
+
+  <!-- left accent bar + wordmark -->
+  <g>
+    <rect x="90" y="128" width="14" height="64" rx="6" fill="#E60000"/>
+    <text x="122" y="182" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+          font-size="68" font-weight="700" fill="#F4F4F6" letter-spacing="-1">ndpiano</text>
+    <text x="122" y="228" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+          font-size="22" font-weight="400" fill="#9a9aa0">play your Nord libraries — without the Nord</text>
+    <text x="122" y="268" font-family="Helvetica Neue, Helvetica, Arial, sans-serif"
+          font-size="15" font-weight="500" fill="#E60000" letter-spacing="2">PERSONAL PROJECT · LOCAL AUDITION · NOT FOR SALE</text>
   </g>
 
-  <!-- title -->
-  <text x="600" y="150" text-anchor="middle" font-size="88" font-weight="700" fill="#ffffff" letter-spacing="2">Nord<tspan fill="#DA0012">Piano</tspan></text>
-  <text x="600" y="196" text-anchor="middle" font-size="24" fill="#ffffff" opacity="0.55" letter-spacing="6">A NORD PIANO LIBRARY PLAYER FOR MACOS</text>
-
-  <!-- red accent line -->
-  <rect x="0" y="236" width="1200" height="4" fill="#DA0012"/>
-
-  <!-- keyboard: 10 white keys starting x=250, red key on middle C -->
-  <g stroke="#0a0a0b" stroke-width="2">
-    <rect x="250" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="320" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="390" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="460" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="530" y="240" width="68" height="140" rx="4" fill="url(#redkey)" stroke="none"/>
-    <rect x="600" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="670" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="740" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="810" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
-    <rect x="880" y="240" width="68" height="140" rx="4" fill="url(#key)"/>
+  <!-- piano-keys motif, right side -->
+  <g transform="translate(760, 96)">
+    <!-- red pillar -->
+    <rect x="0" y="0" width="34" height="230" rx="17" fill="url(#redPillar)"/>
+    <!-- white keys -->
+    <g fill="url(#white)">
+      <path d="M 62 0 H 116 V 204 C 116 213.9 107.9 222 98 222 H 80 C 70.1 222 62 213.9 62 204 Z"/>
+      <path d="M 126 0 H 180 V 204 C 180 213.9 171.9 222 162 222 H 144 C 134.1 222 126 213.9 126 204 Z"/>
+      <path d="M 190 0 H 244 V 204 C 244 213.9 235.9 222 226 222 H 208 C 198.1 222 190 213.9 190 204 Z"/>
+      <path d="M 254 0 H 308 V 204 C 308 213.9 299.9 222 290 222 H 272 C 262.1 222 254 213.9 254 204 Z"/>
+      <path d="M 318 0 H 372 V 204 C 372 213.9 363.9 222 354 222 H 336 C 326.1 222 318 213.9 318 204 Z"/>
+    </g>
+    <!-- black keys -->
+    <g fill="#121214">
+      <rect x="98" y="0" width="32" height="132" rx="6"/>
+      <rect x="162" y="0" width="32" height="132" rx="6"/>
+      <rect x="226" y="0" width="32" height="132" rx="6"/>
+      <rect x="290" y="0" width="32" height="132" rx="6"/>
+      <rect x="354" y="0" width="32" height="132" rx="6"/>
+    </g>
+    <!-- LED dot on first key -->
+    <circle cx="89" cy="36" r="8" fill="#E60000"/>
   </g>
-  <g fill="#0c0c0d">
-    <rect x="296" y="240" width="48" height="88" rx="3"/>
-    <rect x="366" y="240" width="48" height="88" rx="3"/>
-    <rect x="506" y="240" width="48" height="88" rx="3"/>
-    <rect x="576" y="240" width="48" height="88" rx="3"/>
-    <rect x="646" y="240" width="48" height="88" rx="3"/>
-    <rect x="786" y="240" width="48" height="88" rx="3"/>
-    <rect x="856" y="240" width="48" height="88" rx="3"/>
-  </g>
+
+  <!-- bottom hairline -->
+  <rect x="0" y="417" width="1200" height="3" fill="#E60000" opacity="0.35"/>
 </svg>
