@@ -1,46 +1,68 @@
 import AppKit
 import CoreGraphics
 
-/// Same artwork as ../../icon.swift (dark rounded square, red accent bar, piano keys),
-/// rendered at runtime so the SwiftPM-built app shows it in the Dock/Finder without an .icns.
+/// Same artwork as ../../icon.swift and icon-work/icon.svg (dark rounded square
+/// `#121214`, red accent pillar `#E60000`, 3 white keys with rounded bottoms,
+/// 2 black keys, red LED dot; viewBox 512, group offset translate(4,0)), rendered
+/// at runtime so the Dock icon matches the bundle .icns everywhere.
 func makeAppIcon(size: Int = 512) -> NSImage {
-    let s = CGFloat(size)
-    let img = NSImage(size: NSSize(width: s, height: s))
+    drawIcon(size)
+}
+
+/// Faithful CoreGraphics port of the icon SVG. Coordinates are raw SVG units
+/// mapped to image points via per-path transforms (top-down y flipped), NOT via
+/// ctx.translate/scale: lockFocus() reuses pooled contexts that retain the CTM.
+func drawIcon(_ size: Int) -> NSImage {
+    let s = CGFloat(size) / 512
+    var flip = CGAffineTransform(a: s, b: 0, c: 0, d: -s, tx: 0, ty: 512 * s)
+    var toDevice = CGAffineTransform(translationX: 4 * s, y: 0).concatenating(flip)
+
+    let img = NSImage(size: NSSize(width: 512 * s, height: 512 * s))
     img.lockFocus()
     let ctx = NSGraphicsContext.current!.cgContext
 
-    let bg = CGPath(roundedRect: CGRect(x: 0, y: 0, width: s, height: s),
-                    cornerWidth: s * 0.22, cornerHeight: s * 0.22, transform: nil)
-    ctx.addPath(bg)
-    ctx.setFillColor(CGColor(red: 0.07, green: 0.07, blue: 0.08, alpha: 1))
+    let dark = CGColor(srgbRed: 0x12 / 255, green: 0x12 / 255, blue: 0x14 / 255, alpha: 1)
+    let red = CGColor(srgbRed: 0xE6 / 255, green: 0, blue: 0, alpha: 1)
+    let keyWhite = CGColor(srgbRed: 0xF4 / 255, green: 0xF4 / 255, blue: 0xF6 / 255, alpha: 1)
+
+    // Opaque icon: full-square dark fill, then the SVG's rounded-square background.
+    ctx.addRect(CGRect(x: 0, y: 0, width: 512 * s, height: 512 * s))
+    ctx.setFillColor(dark)
+    ctx.fillPath()
+    ctx.addPath(CGPath(roundedRect: CGRect(x: 32, y: 32, width: 448, height: 448),
+                       cornerWidth: 96, cornerHeight: 96, transform: &flip))
+    ctx.setFillColor(dark)
     ctx.fillPath()
 
-    let bar = CGPath(roundedRect: CGRect(x: s * 0.14, y: s * 0.2, width: s * 0.09, height: s * 0.6),
-                     cornerWidth: s * 0.03, cornerHeight: s * 0.03, transform: nil)
-    ctx.addPath(bar)
-    ctx.setFillColor(CGColor(red: 0.855, green: 0.0, blue: 0.07, alpha: 1))
+    // red accent pillar
+    ctx.addPath(CGPath(roundedRect: CGRect(x: 96, y: 112, width: 36, height: 288),
+                       cornerWidth: 18, cornerHeight: 18, transform: &toDevice))
+    ctx.setFillColor(red)
     ctx.fillPath()
 
-    let keyW = s * 0.17, keyH = s * 0.52, baseY = s * 0.2
-    let x1 = s * 0.30, x2 = s * 0.52
-    for x in [x1, x2] {
-        let p = CGPath(roundedRect: CGRect(x: x, y: baseY, width: keyW, height: keyH),
-                       cornerWidth: s * 0.03, cornerHeight: s * 0.03, transform: nil)
+    // white keys: square top, rounded bottom (r 18) — rect plus two corner circles
+    for x: CGFloat in [160, 226, 292] {
+        let p = CGMutablePath()
+        p.addRect(CGRect(x: x, y: 112, width: 56, height: 271), transform: toDevice)            // 112...383
+        p.addEllipse(in: CGRect(x: x, y: 383 - 36, width: 36, height: 36), transform: toDevice)      // bottom-left r18
+        p.addEllipse(in: CGRect(x: x + 20, y: 383 - 36, width: 36, height: 36), transform: toDevice) // bottom-right r18
         ctx.addPath(p)
-        ctx.setFillColor(.white)
+        ctx.setFillColor(keyWhite)
         ctx.fillPath()
     }
-    let black = CGPath(roundedRect: CGRect(x: x1 + keyW * 0.72, y: baseY + keyH * 0.32,
-                                           width: keyW * 0.56, height: keyH * 0.68),
-                       cornerWidth: s * 0.02, cornerHeight: s * 0.02, transform: nil)
-    ctx.addPath(black)
-    ctx.setFillColor(CGColor(gray: 0.08, alpha: 1))
-    ctx.fillPath()
 
-    let dot = CGPath(ellipseIn: CGRect(x: x1 + keyW / 2 - s * 0.025, y: baseY + keyH - s * 0.09,
-                                       width: s * 0.05, height: s * 0.05), transform: nil)
-    ctx.addPath(dot)
-    ctx.setFillColor(CGColor(red: 0.855, green: 0.0, blue: 0.07, alpha: 1))
+    // black keys
+    for x: CGFloat in [200, 266] {
+        ctx.addPath(CGPath(roundedRect: CGRect(x: x, y: 112, width: 32, height: 168),
+                           cornerWidth: 6, cornerHeight: 6, transform: &toDevice))
+        ctx.setFillColor(dark)
+        ctx.fillPath()
+    }
+
+    // red LED dot on the first key
+    ctx.addPath(CGPath(ellipseIn: CGRect(x: 188 - 8, y: 152 - 8, width: 16, height: 16),
+                       transform: &toDevice))
+    ctx.setFillColor(red)
     ctx.fillPath()
 
     img.unlockFocus()

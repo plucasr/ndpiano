@@ -6,6 +6,8 @@ struct Knob: View {
     @Binding var value: Double
     let label: String
     var range: ClosedRange<Double> = 0...1
+    /// Knob diameter in points; the FX strip uses 22, the velocity knob is larger.
+    var diameter: CGFloat = 22
     @State private var startValue = 0.0
     @State private var dragging = false
 
@@ -18,11 +20,11 @@ struct Knob: View {
                 // needle: -135°…+135° across the range
                 Rectangle()
                     .fill(NordColor.red)
-                    .frame(width: 2, height: 9)
-                    .offset(y: -6)
+                    .frame(width: 2, height: diameter * 0.4)
+                    .offset(y: -diameter * 0.28)
                     .rotationEffect(.degrees(-135 + 270 * normalized))
             }
-            .frame(width: 22, height: 22)
+            .frame(width: diameter, height: diameter)
             .contentShape(Circle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -36,8 +38,10 @@ struct Knob: View {
             )
             if !label.isEmpty {
                 Text(label)
-                    .font(.system(size: 7, weight: .medium))
+                    .font(NordFont.font(7, weight: .medium))
                     .foregroundStyle(NordColor.subtext)
+                    .lineLimit(1)
+                    .fixedSize()
             }
         }
     }

@@ -50,7 +50,7 @@ struct Layer {
 }
 
 /// One channel strip of the mixer: a layer's voices plus its own FX unit chain
-/// (source → low shelf → mid parametric → high shelf → low-pass → compressor → reverb → master).
+/// (source → low shelf → mid parametric → high shelf → low-pass → compressor → drive → delay → reverb → master).
 private final class Channel {
     let id: URL
     var voices: [Voice] = []
@@ -61,6 +61,8 @@ private final class Channel {
     var eqHigh: AVAudioUnit?
     var filter: AVAudioUnit?
     var comp: AVAudioUnit?
+    var drive: AVAudioUnit?
+    var delay: AVAudioUnit?
     var reverb: AVAudioUnit?
 
     init(id: URL, fx: PianoPlayer.LayerFX) {
@@ -84,12 +86,17 @@ public final class PianoPlayer {
     private var channels: [URL: Channel] = [:]
     private var sustainPedal = false
     private var outRate: Double = 44_100
+    /// Master output gain 0…1, applied to the mixed buffers in the render callback.
+    private var masterGain: Float = 1
+    /// Extra "PA punch" boost in linear amplitude (1 = unity), from setMasterBoost dB.
+    private var boostLinear: Float = 1
 
     /// FX settings for layers that have no channel yet (engine not started).
     private var pendingFX: [URL: LayerFX] = [:]
 
     private var filterUnit: AVAudioUnit?
     private var compUnit: AVAudioUnit?
+    private var delayUnit: AVAudioUnit?
     private var reverbUnit: AVAudioUnit?
 
     var onSoundingNotes: (@Sendable (Set<Int>) -> Void)?
@@ -102,8 +109,16 @@ public final class PianoPlayer {
         public var filterNorm: Double = 1
         public var compOn = false
         public var compAmount: Double = 0.3
+        public var driveOn = false
+        public var driveNorm: Double = 0.3
+        public var driveMix: Double = 0.5
+        public var delayOn = false
+        public var delayTime: Double = 0.25 // seconds, 0…2
+        public var delayFeedback: Double = 0.3
+        public var delayMix: Double = 0.2
         public var reverbOn = false
         public var reverbMix: Double = 0.2
+        public var reverbSize: Double = 0.3
         public var eqLow: Double = 0
         public var eqMid: Double = 0
         public var eqHigh: Double = 0
@@ -293,15 +308,17 @@ public final class PianoPlayer {
         outRate = engine.outputNode.inputFormat(forBus: 0).sampleRate
         let format = AVAudioFormat(standardFormatWithSampleRate: outRate, channels: 2)!
 
-        // Master bus FX: mainMixer → low-pass → compressor → reverb → output.
+        // Master bus FX: mainMixer → low-pass → compressor → delay → reverb → output.
         filterUnit = try makeEffect(kAudioUnitSubType_LowPassFilter)
         compUnit = try makeEffect(kAudioUnitSubType_DynamicsProcessor)
+        delayUnit = try makeEffect(kAudioUnitSubType_Delay)
         reverbUnit = try makeEffect(kAudioUnitSubType_Reverb2)
-        for unit in [filterUnit, compUnit, reverbUnit] { engine.attach(unit!) }
+        for unit in [filterUnit, compUnit, delayUnit, reverbUnit] { engine.attach(unit!) }
         engine.disconnectNodeOutput(engine.mainMixerNode) // drop the implicit mixer→output
         engine.connect(engine.mainMixerNode, to: filterUnit!, format: format)
         engine.connect(filterUnit!, to: compUnit!, format: format)
-        engine.connect(compUnit!, to: reverbUnit!, format: format)
+        engine.connect(compUnit!, to: delayUnit!, format: format)
+        engine.connect(delayUnit!, to: reverbUnit!, format: format)
         engine.connect(reverbUnit!, to: engine.outputNode, format: format)
 
         // One channel strip per layer.
@@ -312,6 +329,7 @@ public final class PianoPlayer {
         // Defaults: everything neutral/bypassed.
         setFilter(enabled: false, cutoffHz: 18_000)
         setCompressor(amount: 0)
+        setMasterDelay(enabled: false, timeSeconds: 0.25, feedback: 0.3, mix: 0.2)
         setReverb(mix: 0, decaySeconds: 1.8)
 
         // Re-apply the persisted output device now that the engine is live.
@@ -372,13 +390,15 @@ public final class PianoPlayer {
             channel.eqHigh = try makeEffect(kAudioUnitSubType_HighShelfFilter)
             channel.filter = try makeEffect(kAudioUnitSubType_LowPassFilter)
             channel.comp = try makeEffect(kAudioUnitSubType_DynamicsProcessor)
+            channel.drive = try makeEffect(kAudioUnitSubType_Distortion)
+            channel.delay = try makeEffect(kAudioUnitSubType_Delay)
             channel.reverb = try makeEffect(kAudioUnitSubType_Reverb2)
         } catch {
             print("nordpiano: attachChannel \(id.lastPathComponent) FAILED: \(error)")
             return
         }
         let units = [channel.eqLow, channel.eqMid, channel.eqHigh,
-                     channel.filter, channel.comp, channel.reverb]
+                     channel.filter, channel.comp, channel.drive, channel.delay, channel.reverb]
         for unit in units { engine.attach(unit!) }
         if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
             print("nordpiano: attachChannel \(id.lastPathComponent) units ok")
@@ -401,7 +421,9 @@ public final class PianoPlayer {
         engine.connect(channel.eqMid!, to: channel.eqHigh!, format: format)
         engine.connect(channel.eqHigh!, to: channel.filter!, format: format)
         engine.connect(channel.filter!, to: channel.comp!, format: format)
-        engine.connect(channel.comp!, to: channel.reverb!, format: format)
+        engine.connect(channel.comp!, to: channel.drive!, format: format)
+        engine.connect(channel.drive!, to: channel.delay!, format: format)
+        engine.connect(channel.delay!, to: channel.reverb!, format: format)
         engine.connect(channel.reverb!, to: engine.mainMixerNode, format: format)
         channels[id] = channel
         applyChannelFX(channel)
@@ -409,7 +431,7 @@ public final class PianoPlayer {
 
     private func detach(channel: Channel) {
         let nodes: [AVAudioNode] = [channel.source, channel.eqLow, channel.eqMid, channel.eqHigh,
-                                    channel.filter, channel.comp, channel.reverb].compactMap { $0 }
+                                    channel.filter, channel.comp, channel.drive, channel.delay, channel.reverb].compactMap { $0 }
         for node in nodes { engine.disconnectNodeInput(node); engine.disconnectNodeOutput(node) }
         for node in nodes { engine.detach(node) }
     }
@@ -452,8 +474,20 @@ public final class PianoPlayer {
                  Float(min(18_000, max(20, 200 * pow(90, fx.filterNorm)))))
         setBypass(channel.filter, !fx.filterOn)
         applyCompressor(channel.comp, amount: fx.compOn ? fx.compAmount : 0)
+        // Distortion: parameter IDs from Apple's AudioUnit headers —
+        // SoftClipGain=14 (the drive amount), FinalMix=15 (wet/dry).
+        setParam(channel.drive, 14, Float(fx.driveNorm * 20))
+        setParam(channel.drive, 15, Float(min(100, max(0, fx.driveMix * 100))))
+        setBypass(channel.drive, !fx.driveOn)
+        // Delay mirrors the master-bus mapping (wet/dry=0, time=1, feedback=2).
+        setParam(channel.delay, 0, Float(min(100, max(0, fx.delayMix * 100))))
+        setParam(channel.delay, 1, Float(min(2, max(0, fx.delayTime))))
+        setParam(channel.delay, 2, Float(min(100, max(0, fx.delayFeedback * 100))))
+        setBypass(channel.delay, !fx.delayOn)
         setParam(channel.reverb, kReverb2Param_DryWetMix, Float(min(1, max(0, fx.reverbMix))) * 100)
-        setParam(channel.reverb, kReverb2Param_DecayTimeAt0Hz, 1.8)
+        let decay = Float(min(20, max(0.1, 0.3 + fx.reverbSize * 6.7)))
+        setParam(channel.reverb, kReverb2Param_DecayTimeAt0Hz, decay)
+        setParam(channel.reverb, kReverb2Param_DecayTimeAtNyquist, decay)
         setBypass(channel.reverb, !fx.reverbOn)
     }
 
@@ -483,6 +517,15 @@ public final class PianoPlayer {
         setParam(reverbUnit, kReverb2Param_DecayTimeAt0Hz, Float(min(20, max(0.1, decaySeconds))))
         setParam(reverbUnit, kReverb2Param_DecayTimeAtNyquist, Float(min(20, max(0.1, decaySeconds))))
         setBypass(reverbUnit, m <= 0)
+    }
+
+    /// DELAY (echo): time 0…2 s, feedback 0…1 (0…100 %), wet/dry mix 0…1.
+    /// Delay parameter IDs from Apple's AudioUnit headers: wet/dry=0, time=1, feedback=2.
+    public func setMasterDelay(enabled: Bool, timeSeconds: Double, feedback: Double, mix: Double) {
+        setParam(delayUnit, 0, Float(min(100, max(0, mix * 100))))
+        setParam(delayUnit, 1, Float(min(2, max(0, timeSeconds))))
+        setParam(delayUnit, 2, Float(min(100, max(0, feedback * 100))))
+        setBypass(delayUnit, !enabled)
     }
 
     // MARK: - MIDI
@@ -653,6 +696,21 @@ public final class PianoPlayer {
         lock.unlock()
     }
 
+    /// Global output volume 0…1, applied at the final mix.
+    public func setMasterVolume(_ volume: Float) {
+        lock.lock()
+        masterGain = min(1, max(0, volume))
+        lock.unlock()
+    }
+
+    /// Output boost 0…+12 dB (0 = unity, the default). Multiplies master volume
+    /// at the final mix — the "PA punch" control. Watch clipping when layering.
+    public func setMasterBoost(dB: Float) {
+        lock.lock()
+        boostLinear = pow(10, min(12, max(0, dB)) / 20)
+        lock.unlock()
+    }
+
     /// Pick the stroke + root key for a note on one layer: piano zones route through
     /// the layer table and velocity floors; sample zones match key range + velocity
     /// range directly and name their stroke by global id.
@@ -715,18 +773,20 @@ public final class PianoPlayer {
     // MARK: - Render (audio thread, one source-node callback per channel)
 
     private func render(channelID: URL, intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
+        for frame in 0..<frames {
+            outL[frame] = 0
+            outR[frame] = 0
+        }
+        // Voices are rendered IN PLACE under the lock: taking them out for the mix
+        // created a window where noteOff/sustain found an empty voice list and
+        // marked nothing, and the put-back reinserted the voice with releasing=false
+        // — the stuck-note bug. Decoding happens outside this lock, so hold times
+        // stay sub-millisecond.
         lock.lock()
         guard let channel = channels[channelID] else { lock.unlock(); return }
-        var active = channel.voices
-        channel.voices.removeAll(keepingCapacity: true)
-        lock.unlock()
+        let master = masterGain * boostLinear
+        renderVoices(&channel.voices, master: master, intoL: outL, r: outR, frames: frames)
 
-        let (keep, notes) = renderVoices(&active, intoL: outL, r: outR, frames: frames)
-
-        lock.lock()
-        if let channel = channels[channelID] {
-            channel.voices.append(contentsOf: keep)
-        }
         // Aggregate across channels; notify only when the sounding set changes.
         var all: Set<Int> = []
         for ch in channels.values { all.formUnion(ch.voices.map(\.note)) }
@@ -740,19 +800,14 @@ public final class PianoPlayer {
         }
     }
 
-    /// Mix one block of voices into the output. Returns the surviving voices and their notes.
-    private func renderVoices(_ active: inout [Voice], intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) -> (keep: [Voice], notes: Set<Int>) {
+    /// Mix one block of voices into the output, mutating `voices` in place:
+    /// finished voices are removed, survivors keep their advanced position.
+    /// Caller must hold `lock` (noteOff/sustain mark these same structs).
+    private func renderVoices(_ voices: inout [Voice], master: Float, intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
         let releaseStep = Float(exp(-1 / (releaseTau * outRate)))
-        var keep: [Voice] = []
-        keep.reserveCapacity(active.count)
-
-        for frame in 0..<frames {
-            outL[frame] = 0
-            outR[frame] = 0
-        }
-
-        for vi in active.indices {
-            var v = active[vi]
+        var vi = voices.startIndex
+        while vi < voices.endIndex {
+            var v = voices[vi]
             let count = v.pcm[0].count
             let stereo = v.pcm.count == 2
             var frame = 0
@@ -774,9 +829,9 @@ public final class PianoPlayer {
                 let p0 = Int(v.pos)
                 let frac = Float(v.pos - Double(p0))
                 let p1 = min(p0 + 1, count - 1)
-                let l = (v.pcm[0][p0] + (v.pcm[0][p1] - v.pcm[0][p0]) * frac) * v.env * v.gain
+                let l = (v.pcm[0][p0] + (v.pcm[0][p1] - v.pcm[0][p0]) * frac) * v.env * v.gain * master
                 let r = stereo
-                    ? (v.pcm[1][p0] + (v.pcm[1][p1] - v.pcm[1][p0]) * frac) * v.env * v.gain
+                    ? (v.pcm[1][p0] + (v.pcm[1][p1] - v.pcm[1][p0]) * frac) * v.env * v.gain * master
                     : l
                 outL[frame] += l
                 outR[frame] += r
@@ -786,9 +841,13 @@ public final class PianoPlayer {
                 }
                 frame += 1
             }
-            if alive { keep.append(v) }
+            if alive {
+                voices[vi] = v
+                vi = voices.index(after: vi)
+            } else {
+                voices.remove(at: vi)
+            }
         }
-        return (keep, Set(keep.map(\.note)))
     }
 }
 

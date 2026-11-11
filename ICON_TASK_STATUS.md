@@ -17,7 +17,10 @@ Ground-truth SVG render saved at `ground-truth.png` (regenerate with
   (Info.plist already declared `CFBundleIconFile = AppIcon.icns`). Verified via
   `qlmanage` thumbnail against the artwork. Note: `Sources/NordPianoApp/AppIcon.swift`
   still draws its own approximate icon at runtime — consider replacing it with the
-  faithful `drawIcon` port if the runtime path is still used.
+  faithful `drawIcon` port if the runtime path is still used. DONE 2026-11-11:
+  `Sources/NordPianoApp/AppIcon.swift` now IS the faithful `drawIcon` port (the
+  runtime `applicationIconImage` was overriding the Dock icon with the old
+  approximation), so Dock and Launchpad/icons agree everywhere.
 
 ## Key lessons learned (don't rediscover these)
 1. **Root-cause bug was context pooling**: the old code mutated the CTM inside

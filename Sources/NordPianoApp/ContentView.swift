@@ -71,10 +71,10 @@ struct ContentView: View {
                     .fill(NordColor.red)
                     .frame(width: 10, height: 26)
                 Text("nordpiano")
-                    .font(.system(size: 20, weight: .bold))
+                    .font(NordFont.font(20, weight: .bold))
                     .foregroundStyle(NordColor.text)
-                Text("LOCAL AUDITION · NOT AFFILIATED WITH NORD / CLAVIA")
-                    .font(.system(size: 9, weight: .medium))
+                Text("Sample player")
+                    .font(NordFont.font(9, weight: .medium))
                     .foregroundStyle(NordColor.subtext)
             }
             Spacer()
@@ -98,7 +98,7 @@ struct ContentView: View {
                     ForEach(model.sections, id: \.title) { section in
                         Section(header: HStack {
                             Text(section.title)
-                                .font(.system(size: 10, weight: .bold))
+                                .font(NordFont.font(10, weight: .bold))
                                 .foregroundStyle(NordColor.red)
                             Spacer()
                             if !section.title.hasPrefix("★") {
@@ -129,16 +129,6 @@ struct ContentView: View {
             }
             VStack(spacing: 12) {
             HStack(spacing: 16) {
-                Text("VELOCITY")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(NordColor.subtext)
-                Slider(value: $model.velocity, in: 1...127)
-                    .tint(NordColor.red)
-                    .frame(maxWidth: 260)
-                Text("\(Int(model.velocity))")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(NordColor.text)
-                    .frame(width: 26)
                 Spacer()
                 Button("Folder…") {
                     let panel = NSOpenPanel()
@@ -219,15 +209,73 @@ struct ContentView: View {
     /// Nord-style FX row: FILTER / COMPRESSOR / REVERB — round knob(s) on top,
     /// pill toggle below, so each group stays narrow.
     private var fxStrip: some View {
-        HStack(alignment: .top, spacing: 20) {
+        HStack(alignment: .center, spacing: 20) {
+            // Velocity leads the strip: primary playing control, always live (no
+            // toggle), bigger knob. The divider lives on the EFFECTS group's
+            // leading edge as a background (out of layout flow, like CSS
+            // height:100% of the container) so it spans the full strip height
+            // — an in-flow maxHeight:.infinity line greedily stretched the strip.
+            VStack(spacing: 4) {
+                HStack(spacing: 14) {
+                    VStack(spacing: 2) {
+                        Text("\(Int(model.velocity))")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(NordColor.text)
+                        Knob(value: Binding(
+                            get: { (model.velocity - 1) / 126 },
+                            set: { model.velocity = 1 + $0 * 126 }
+                        ), label: "", diameter: 40)
+                        Text("VELOCITY")
+                            .font(NordFont.font(8, weight: .semibold))
+                            .foregroundStyle(NordColor.red)
+                    }
+                    VStack(spacing: 2) {
+                        Text("\(Int(model.masterVolume * 100))%")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(NordColor.text)
+                        Knob(value: $model.masterVolume, label: "", diameter: 40)
+                        Text("VOLUME")
+                            .font(NordFont.font(8, weight: .semibold))
+                            .foregroundStyle(NordColor.red)
+                    }
+                    VStack(spacing: 2) {
+                        Text(model.boostDb <= 0.05 ? "0" : "+\(Int(model.boostDb.rounded()))")
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(NordColor.text)
+                        Knob(value: Binding(
+                            get: { min(1, max(0, model.boostDb / 12)) },
+                            set: { model.boostDb = $0 * 12 }
+                        ), label: "", diameter: 40)
+                        Text("BOOST")
+                            .font(NordFont.font(8, weight: .semibold))
+                            .foregroundStyle(NordColor.red)
+                    }
+                }
+            }
+            HStack(alignment: .top, spacing: 20) {
             fxGroup(label: "FILTER", isOn: $model.filterOn) {
                 fxKnob(value: $model.filterNorm, caption: "CUT",
                        readout: model.filterNorm > 0.97 ? "∞" : "\(Int(200 * pow(90, model.filterNorm)))")
             }
+            .effectDivider()
             fxGroup(label: "COMP", isOn: $model.compOn) {
                 fxKnob(value: $model.compAmount, caption: "AMT",
                        readout: "\(Int(model.compAmount * 100))%")
             }
+            .effectDivider()
+            fxGroup(label: "DELAY", isOn: $model.delayOn) {
+                HStack(spacing: 10) {
+                    fxKnob(value: Binding(
+                        get: { min(1, max(0, model.delayTime / 2)) },
+                        set: { model.delayTime = $0 * 2 }
+                    ), caption: "TIME", readout: String(format: "%.2f", model.delayTime) + "s")
+                    fxKnob(value: $model.delayFeedback, caption: "FBT",
+                           readout: "\(Int(model.delayFeedback * 100))%")
+                    fxKnob(value: $model.delayMix, caption: "MIX",
+                           readout: "\(Int(model.delayMix * 100))%")
+                }
+            }
+            .effectDivider()
             fxGroup(label: "REVERB", isOn: $model.reverbOn) {
                 HStack(spacing: 10) {
                     fxKnob(value: $model.reverbMix, caption: "MIX",
@@ -235,6 +283,14 @@ struct ContentView: View {
                     fxKnob(value: $model.reverbSize, caption: "SIZE",
                            readout: String(format: "%.1f", 0.3 + model.reverbSize * 6.7) + "s")
                 }
+            }
+            }
+            .padding(.leading, 20)
+            .background(alignment: .leading) {
+                Rectangle()
+                    .fill(NordColor.red)
+                    .frame(width: 1)
+                    .padding(.vertical, 8)
             }
             Spacer()
         }
@@ -248,32 +304,63 @@ struct ContentView: View {
     private func fxKnob(value: Binding<Double>, caption: String, readout: String) -> some View {
         VStack(spacing: 2) {
             Text(readout)
-                .font(.system(size: 8, design: .monospaced))
+                .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(NordColor.subtext)
-            Knob(value: value, label: caption)
+                .lineLimit(1)
+                .fixedSize()
+            Knob(value: value, label: caption, diameter: 38)
         }
     }
 
+    /// Effect group: knob(s) beside a vertical pill toggle. Fixed height so
+    /// every group (and therefore every divider pinned to a group) matches —
+    /// the divider height must not depend on wrapped-content luck.
     private func fxGroup<Content: View>(label: String, isOn: Binding<Bool>, @ViewBuilder content: () -> Content) -> some View {
-        VStack(spacing: 4) {
+        HStack(alignment: .center, spacing: 12) {
             content()
                 .disabled(!isOn.wrappedValue)
                 .opacity(isOn.wrappedValue ? 1 : 0.4)
             Toggle(label, isOn: isOn)
-                .toggleStyle(PillToggleStyle(labelBelow: true))
+                .toggleStyle(VerticalPillToggleStyle())
         }
+        .frame(height: 76)
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 16) {
             Circle().fill(model.player == nil ? Color.gray : Color.green).frame(width: 7, height: 7)
             Text(model.status).font(.caption).foregroundStyle(NordColor.subtext)
             Spacer()
+            // Current devices, so the selection is visible without opening the menu.
+            HStack(spacing: 12) {
+                Label(model.audioDevices.first(where: { $0.id == model.audioDeviceID })?.name ?? "System Default",
+                      systemImage: "hifispeaker")
+                Label(model.midiInputs.first(where: { $0.id == model.midiSourceID })?.name ?? "All Sources",
+                      systemImage: "pianokeys")
+            }
+            .font(NordFont.font(9))
+            .foregroundStyle(NordColor.subtext)
+            .lineLimit(1)
             Button("Quit") { NSApplication.shared.terminate(nil) }
                 .buttonStyle(.bordered).tint(.gray)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(NordColor.card)
+    }
+}
+
+extension View {
+    /// Vertical separator between effect groups: a background pinned to the
+    /// view's trailing edge (out of layout flow, like CSS height:100% of the
+    /// container), so it spans the group's height without affecting layout.
+    func effectDivider() -> some View {
+        padding(.trailing, 10)
+            .background(alignment: .trailing) {
+                Rectangle()
+                    .fill(NordColor.red)
+                    .frame(width: 1)
+                    .padding(.vertical, 8)
+            }
     }
 }

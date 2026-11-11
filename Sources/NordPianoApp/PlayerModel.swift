@@ -19,6 +19,8 @@ final class PlayerModel: ObservableObject {
     @Published var pianoTitle = "No piano loaded"
     @Published var version = ""
     @Published var velocity: Double = 80
+    @Published var masterVolume: Double = 1 { didSet { player?.setMasterVolume(Float(masterVolume)) } }
+    @Published var boostDb: Double = 0 { didSet { player?.setMasterBoost(dB: Float(boostDb)) } }
     @Published var sounding: Set<Int> = []
     @Published var status = "Drop a .npno or .nsmp4 file anywhere, or Open…"
     @Published var roots: [URL] = []
@@ -42,6 +44,10 @@ final class PlayerModel: ObservableObject {
     @Published var filterNorm: Double = 1 { didSet { applyFX() } }
     @Published var compOn = false { didSet { applyFX() } }
     @Published var compAmount: Double = 0.3 { didSet { applyFX() } }
+    @Published var delayOn = false { didSet { applyFX() } }
+    @Published var delayTime: Double = 0.25 { didSet { applyFX() } }
+    @Published var delayFeedback: Double = 0.3 { didSet { applyFX() } }
+    @Published var delayMix: Double = 0.2 { didSet { applyFX() } }
     @Published var reverbOn = false { didSet { applyFX() } }
     @Published var reverbMix: Double = 0.2 { didSet { applyFX() } }
     @Published var reverbSize: Double = 0.4 { didSet { applyFX() } }
@@ -299,6 +305,9 @@ final class PlayerModel: ObservableObject {
         let cutoff = 200 * pow(90, filterNorm)
         player?.setFilter(enabled: filterOn, cutoffHz: cutoff)
         player?.setCompressor(amount: compOn ? compAmount : 0)
+        player?.setMasterDelay(enabled: delayOn, timeSeconds: delayTime,
+                               feedback: delayFeedback, mix: delayMix)
+        player?.setMasterBoost(dB: Float(boostDb))
         player?.setReverb(mix: reverbOn ? reverbMix : 0, decaySeconds: 0.3 + reverbSize * 6.7)
     }
 
