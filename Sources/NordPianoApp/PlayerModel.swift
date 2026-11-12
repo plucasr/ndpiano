@@ -21,7 +21,6 @@ final class PlayerModel: ObservableObject {
     @Published var velocity: Double = 80
     @Published var masterVolume: Double = 1 { didSet { player?.setMasterVolume(Float(masterVolume)) } }
     @Published var boostDb: Double = 0 { didSet { player?.setMasterBoost(dB: Float(boostDb)) } }
-    @Published var releaseGain: Double = 0.5 { didSet { player?.setReleaseGain(Float(releaseGain)) } }
     @Published var sounding: Set<Int> = []
     @Published var status = "Drop a .npno or .nsmp4 file anywhere, or Open…"
     @Published var roots: [URL] = []

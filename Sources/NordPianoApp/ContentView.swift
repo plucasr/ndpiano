@@ -250,15 +250,6 @@ struct ContentView: View {
                             .font(NordFont.font(8, weight: .semibold))
                             .foregroundStyle(NordColor.red)
                     }
-                    VStack(spacing: 2) {
-                        Text("\(Int(model.releaseGain * 200))%")
-                            .font(.system(size: 8, design: .monospaced))
-                            .foregroundStyle(NordColor.text)
-                        Knob(value: $model.releaseGain, label: "", diameter: 40)
-                        Text("RELEASE")
-                            .font(NordFont.font(8, weight: .semibold))
-                            .foregroundStyle(NordColor.red)
-                    }
                 }
             }
             HStack(alignment: .top, spacing: 20) {

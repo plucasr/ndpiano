@@ -94,9 +94,6 @@ public final class PianoPlayer {
     private var masterGain: Float = 1
     /// Extra "PA punch" boost in linear amplitude (1 = unity), from setMasterBoost dB.
     private var boostLinear: Float = 1
-    /// Key-release sample level, multiplied by the released voice's effective
-    /// gain (0.5 = default, 0 = release samples silent).
-    private var releaseGainScale: Float = 0.5
 
     /// FX settings for layers that have no channel yet (engine not started).
     private var pendingFX: [URL: LayerFX] = [:]
@@ -128,8 +125,8 @@ public final class PianoPlayer {
         public var reverbSize: Double = 0.3
         /// Attack time 0…1 (0 = instant). Squared → 0…300 ms so the fast end is fine.
         public var attackNorm: Double = 0
-        /// Per-channel key-release level 0…1 (1 = follow the global RELEASE knob).
-        public var releaseGain: Double = 1
+            /// Per-channel key-release level 0…1 (0.5 = default, 0 = silent).
+        public var releaseGain: Double = 0.5
         public var eqLow: Double = 0
         public var eqMid: Double = 0
         public var eqHigh: Double = 0
@@ -741,8 +738,8 @@ public final class PianoPlayer {
     }
 
     /// Spawn the key-release stroke for `note` as a one-shot voice on each piano
-    /// layer; level = effective voice gain × global RELEASE × the channel's own
-    /// release knob. No attack ramp — the thud needs its transient.
+    /// layer; level = effective voice gain × the channel's own release knob.
+    /// No attack ramp — the thud needs its transient.
     private func noteOnRelease(_ note: Int, gain: Float) {
         lock.lock()
         let snapshot = layers
@@ -753,7 +750,7 @@ public final class PianoPlayer {
                   let key = pianoKey(zones, midi: note),
                   let stroke = releaseStrokeFor(dir, zone: key.zone) else { continue }
             lock.lock()
-            let scale = releaseGainScale * Float((channels[layer.id]?.fx ?? pendingFX[layer.id] ?? LayerFX()).releaseGain)
+            let scale = Float((channels[layer.id]?.fx ?? pendingFX[layer.id] ?? LayerFX()).releaseGain)
             lock.unlock()
             let cached = cachedOrDecodePiano(layer, stroke, bytes: bytes, dir: dir)
             var v = Voice(pcm: cached.pcm, rate: 1, gain: gain * scale, note: note)
@@ -793,14 +790,6 @@ public final class PianoPlayer {
     public func setMasterBoost(dB: Float) {
         lock.lock()
         boostLinear = pow(10, min(12, max(0, dB)) / 20)
-        lock.unlock()
-    }
-
-    /// Key-release sample level 0…1, multiplies the released voice's effective
-    /// gain (0.5 default, 0 mutes release samples entirely).
-    public func setReleaseGain(_ scale: Float) {
-        lock.lock()
-        releaseGainScale = min(1, max(0, scale))
         lock.unlock()
     }
 
