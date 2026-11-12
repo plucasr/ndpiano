@@ -68,6 +68,8 @@ private final class Channel {
     var drive: AVAudioUnit?
     var delay: AVAudioUnit?
     var reverb: AVAudioUnit?
+    /// Tremolo LFO phase (radians), advanced per rendered frame.
+    var lfoPhase: Double = 0
 
     init(id: URL, fx: PianoPlayer.LayerFX) {
         self.id = id
@@ -90,6 +92,10 @@ public final class PianoPlayer {
     private var channels: [URL: Channel] = [:]
     private var sustainPedal = false
     private var outRate: Double = 44_100
+    /// Pitch bend in semitones (±2), from MIDI 0xE0. Multiplies every voice's rate.
+    private var pitchBendSemis: Float = 0
+    /// Tremolo depth 0…1, from MIDI CC1 (mod wheel). 5 Hz amplitude LFO.
+    private var tremoloDepth: Float = 0
     /// Master output gain 0…1, applied to the mixed buffers in the render callback.
     private var masterGain: Float = 1
     /// Extra "PA punch" boost in linear amplitude (1 = unity), from setMasterBoost dB.
@@ -655,6 +661,12 @@ public final class PianoPlayer {
                 let cc = b[i], val = b[i + 1]
                 i += 2
                 if cc == 64 { sustain(val >= 64) }
+                if cc == 1 { modWheel(Int(val)) } // modulation wheel → tremolo depth
+            case 0xE0: // pitch bend: 14-bit value, center 8192
+                guard i + 1 < count else { return }
+                let v = Int(b[i]) | Int(b[i + 1]) << 7
+                i += 2
+                pitchBend((Float(v - 8192) / 8192) * 2)
             default:
                 if status & 0xF8 == 0xF8 { i += 1 } else { i += min(2, count - i) }
             }
@@ -762,6 +774,20 @@ public final class PianoPlayer {
             }
             lock.unlock()
         }
+    }
+
+    /// Pitch wheel, in semitones (±2). Applies live to every sounding voice.
+    public func pitchBend(_ semitones: Float) {
+        lock.lock()
+        pitchBendSemis = min(2, max(-2, semitones))
+        lock.unlock()
+    }
+
+    /// Mod wheel (CC1), 0…127 → tremolo depth 0…1.
+    public func modWheel(_ value: Int) {
+        lock.lock()
+        tremoloDepth = Float(value) / 127
+        lock.unlock()
     }
 
     public func sustain(_ down: Bool) {
@@ -873,7 +899,10 @@ public final class PianoPlayer {
         lock.lock()
         guard let channel = channels[channelID] else { lock.unlock(); return }
         let master = masterGain * boostLinear
-        renderVoices(&channel.voices, master: master, intoL: outL, r: outR, frames: frames)
+        let bendMul = Float(pow(2, pitchBendSemis / 12))
+        let tremolo = tremoloDepth
+        renderVoices(&channel.voices, master: master, bendMul: bendMul, tremoloDepth: tremolo,
+                     lfoPhase: &channel.lfoPhase, intoL: outL, r: outR, frames: frames)
 
         // Aggregate across channels; notify only when the sounding set changes.
         var all: Set<Int> = []
@@ -891,8 +920,11 @@ public final class PianoPlayer {
     /// Mix one block of voices into the output, mutating `voices` in place:
     /// finished voices are removed, survivors keep their advanced position.
     /// Caller must hold `lock` (noteOff/sustain mark these same structs).
-    private func renderVoices(_ voices: inout [Voice], master: Float, intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
+    private func renderVoices(_ voices: inout [Voice], master: Float, bendMul: Float,
+                              tremoloDepth: Float, lfoPhase: inout Double,
+                              intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
         let releaseStep = Float(exp(-1 / (releaseTau * outRate)))
+        let lfoStep = 2 * Double.pi * 5 / outRate // 5 Hz tremolo
         var vi = voices.startIndex
         while vi < voices.endIndex {
             var v = voices[vi]
@@ -921,13 +953,18 @@ public final class PianoPlayer {
                 let p0 = Int(v.pos)
                 let frac = Float(v.pos - Double(p0))
                 let p1 = min(p0 + 1, count - 1)
-                let l = (v.pcm[0][p0] + (v.pcm[0][p1] - v.pcm[0][p0]) * frac) * v.env * v.gain * master
+                var tremolo: Float = 1
+                if tremoloDepth > 0 {
+                    tremolo = 1 - 0.5 * tremoloDepth * (1 + Float(sin(lfoPhase)))
+                    lfoPhase += lfoStep
+                }
+                let l = (v.pcm[0][p0] + (v.pcm[0][p1] - v.pcm[0][p0]) * frac) * v.env * v.gain * master * tremolo
                 let r = stereo
-                    ? (v.pcm[1][p0] + (v.pcm[1][p1] - v.pcm[1][p0]) * frac) * v.env * v.gain * master
+                    ? (v.pcm[1][p0] + (v.pcm[1][p1] - v.pcm[1][p0]) * frac) * v.env * v.gain * master * tremolo
                     : l
                 outL[frame] += l
                 outR[frame] += r
-                v.pos += v.rate
+                v.pos += v.rate * Double(bendMul)
                 if v.hasLoop && v.pos >= v.loopStart && v.pos < v.loopEnd {
                     v.gain *= v.loopDecayPerFrame
                 }
