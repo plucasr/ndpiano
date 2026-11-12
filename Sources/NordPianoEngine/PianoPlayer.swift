@@ -12,6 +12,8 @@ private struct Voice {
     var rate: Double // source frames per output frame
     var gain: Float // touch level × headroom × layer gain
     var env: Float = 1 // release envelope
+    /// Per-frame env increment while the attack phase runs (0 = attack done / none).
+    var attackStep: Float = 0
     var releasing = false
     var sustained = false
     var note: Int
@@ -124,6 +126,10 @@ public final class PianoPlayer {
         public var reverbOn = false
         public var reverbMix: Double = 0.2
         public var reverbSize: Double = 0.3
+        /// Attack time 0…1 (0 = instant). Squared → 0…300 ms so the fast end is fine.
+        public var attackNorm: Double = 0
+        /// Per-channel key-release level 0…1 (1 = follow the global RELEASE knob).
+        public var releaseGain: Double = 1
         public var eqLow: Double = 0
         public var eqMid: Double = 0
         public var eqHigh: Double = 0
@@ -673,6 +679,16 @@ public final class PianoPlayer {
 
             let gain = Float(pow(10, -touchAttenuation(velocity) / 100)) * mixHeadroom * layer.gain
             var v = Voice(pcm: picked.stroke.pcm, rate: 1, gain: gain, note: note)
+            // Per-channel attack ramp (0 = instant). Release samples skip it —
+            // the hammer-fall thud needs its transient.
+            lock.lock()
+            let fx = channels[layer.id]?.fx ?? pendingFX[layer.id] ?? LayerFX()
+            lock.unlock()
+            let attackSec = 0.3 * fx.attackNorm * fx.attackNorm
+            if attackSec > 0.001 {
+                v.env = 0
+                v.attackStep = Float(1 / (attackSec * outRate))
+            }
             let semitones = Double(note - picked.rootKey)
             v.rate = pow(2, semitones / 12) * (picked.stroke.sampleRate / outRate)
             if let loop = picked.stroke.loop {
@@ -719,13 +735,14 @@ public final class PianoPlayer {
         let releasedGain = channels.values.flatMap(\.voices)
             .filter { $0.note == note && $0.releasing }
             .map { $0.gain * $0.env }.max()
-        let scale = releaseGainScale
         lock.unlock()
         guard let releasedGain else { return }
-        noteOnRelease(note, gain: releasedGain * scale)
+        noteOnRelease(note, gain: releasedGain)
     }
 
-    /// Spawn the key-release stroke for `note` as a one-shot voice on each piano layer.
+    /// Spawn the key-release stroke for `note` as a one-shot voice on each piano
+    /// layer; level = effective voice gain × global RELEASE × the channel's own
+    /// release knob. No attack ramp — the thud needs its transient.
     private func noteOnRelease(_ note: Int, gain: Float) {
         lock.lock()
         let snapshot = layers
@@ -735,8 +752,11 @@ public final class PianoPlayer {
             guard case .piano(let bytes, let dir, let zones) = layer.source,
                   let key = pianoKey(zones, midi: note),
                   let stroke = releaseStrokeFor(dir, zone: key.zone) else { continue }
+            lock.lock()
+            let scale = releaseGainScale * Float((channels[layer.id]?.fx ?? pendingFX[layer.id] ?? LayerFX()).releaseGain)
+            lock.unlock()
             let cached = cachedOrDecodePiano(layer, stroke, bytes: bytes, dir: dir)
-            var v = Voice(pcm: cached.pcm, rate: 1, gain: gain, note: note)
+            var v = Voice(pcm: cached.pcm, rate: 1, gain: gain * scale, note: note)
             let semitones = Double(note - zones[key.zone].rootNote - Nsp.rootOffset)
             v.rate = pow(2, semitones / 12) * (cached.sampleRate / outRate)
             lock.lock()
@@ -893,6 +913,10 @@ public final class PianoPlayer {
             var alive = true
 
             while frame < frames {
+                if v.attackStep > 0 {
+                    v.env += v.attackStep
+                    if v.env >= 1 { v.env = 1; v.attackStep = 0 }
+                }
                 if v.releasing {
                     v.env *= releaseStep
                     if v.env < 1e-3 { alive = false; break }

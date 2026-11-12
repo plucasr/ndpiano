@@ -29,7 +29,7 @@ struct ChannelFXPanel: View {
             // letter per line ("F B T", vertical cut-off titles).
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .center, spacing: 16) {
-                section(label: "EQ", isOn: .constant(true)) {
+                section(label: "EQ") {
                     HStack(spacing: 12) {
                         panelKnob(value: Binding(
                             get: { fx.eqLow }, set: { v in update { $0.eqLow = v } }
@@ -41,6 +41,22 @@ struct ChannelFXPanel: View {
                             get: { fx.eqHigh }, set: { v in update { $0.eqHigh = v } }
                         ), caption: "hi", range: -1...1)
                     }
+                }
+                .effectDivider()
+
+                section(label: "ATTACK") {
+                    panelKnob(value: Binding(
+                        get: { fx.attackNorm }, set: { v in update { $0.attackNorm = v } }
+                    ), caption: "TIME") { n in
+                        n <= 0.001 ? "0" : "\(Int(300 * n * n))ms"
+                    }
+                }
+                .effectDivider()
+
+                section(label: "RELEASE") {
+                    panelKnob(value: Binding(
+                        get: { fx.releaseGain }, set: { v in update { $0.releaseGain = v } }
+                    ), caption: "AMT") { "\(Int($0 * 100))%" }
                 }
                 .effectDivider()
 
@@ -115,8 +131,9 @@ struct ChannelFXPanel: View {
         .padding(18)
     }
 
-    /// One section: title on top, knobs beside a bare vertical pill toggle.
-    private func section<Content: View>(label: String, isOn: Binding<Bool>,
+    /// One section: title on top, knobs beside a bare vertical pill toggle
+    /// (omit `isOn` for always-live sections like EQ/ATTACK/RELEASE).
+    private func section<Content: View>(label: String, isOn: Binding<Bool>? = nil,
                                         @ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 6) {
             Text(label)
@@ -124,9 +141,9 @@ struct ChannelFXPanel: View {
                 .foregroundStyle(NordColor.red)
             HStack(alignment: .center, spacing: 10) {
                 content()
-                    .disabled(label != "EQ" && !isOn.wrappedValue)
-                    .opacity(isOn.wrappedValue || label == "EQ" ? 1 : 0.4)
-                if label != "EQ" {
+                    .disabled(isOn.map { !$0.wrappedValue } ?? false)
+                    .opacity(isOn?.wrappedValue ?? true ? 1 : 0.4)
+                if let isOn {
                     Toggle("", isOn: isOn)
                         .toggleStyle(VerticalPillToggleStyle())
                         .labelsHidden()
