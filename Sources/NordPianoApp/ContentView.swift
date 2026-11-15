@@ -311,11 +311,18 @@ struct ContentView: View {
     private var enginesSection: some View {
         HStack(spacing: 12) {
             ScenesColumnView(onSave: saveScene, onRename: renameScene)
-            EnginePanelView(category: .piano, title: "PIANO", icon: .piano,
+            EnginePanelView(category: .piano, title: "PIANO",
+                            icons: ["grand": "piano-grand.webp", "upright": "piano-upright.webp",
+                                    "ep": "piano-ep.webp"],
+                            defaultIcon: "piano-grand.webp",
                             subcategories: PianoSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
-            EnginePanelView(category: .organ, title: "ORGAN", icon: .organ,
+            EnginePanelView(category: .organ, title: "ORGAN",
+                            icons: ["b3": "organ-electric.webp", "farfisa": "organ-electric.webp",
+                                    "pipe": "organ-pipe.webp"],
+                            defaultIcon: "organ-electric.webp",
                             subcategories: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
-            EnginePanelView(category: .synth, title: "SYNTH", icon: .synth,
+            EnginePanelView(category: .synth, title: "SYNTH",
+                            icons: [:], defaultIcon: "synth.png",
                             subcategories: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
         }
         .frame(minHeight: 320)

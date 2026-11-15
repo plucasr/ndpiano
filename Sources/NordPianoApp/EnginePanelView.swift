@@ -9,9 +9,11 @@ struct EnginePanelView: View {
     @EnvironmentObject private var model: PlayerModel
 
     let category: SoundCategory
-    /// Display title ("PIANO"), line icon for the display area, subcategory pills.
+    /// Display title ("PIANO"), subcategory→icon-file map and fallback icon,
+    /// subcategory pills.
     let title: String
-    let icon: EngineIcon.Kind
+    let icons: [String: String]
+    let defaultIcon: String
     let subcategories: [(label: String, raw: String)]
 
     @State private var filter: String? // nil = ALL
@@ -94,11 +96,46 @@ struct EnginePanelView: View {
         .padding(.horizontal, 10)
     }
 
+    /// The line-art icon follows what you're about to assign (highlighted row),
+    /// then what's loaded in a channel, then the panel's default.
+    private var currentIcon: String {
+        if let highlighted = model.highlighted,
+           let entry = model.catalogEntry(for: highlighted.url),
+           entry.category == category,
+           let sub = entry.subcategory, let icon = icons[sub] {
+            return icon
+        }
+        if let loaded,
+           let entry = model.catalogEntry(for: loaded.entry.url),
+           let sub = entry.subcategory, let icon = icons[sub] {
+            return icon
+        }
+        return defaultIcon
+    }
+
     private var displayArea: some View {
-        EngineIcon(kind: icon)
-            .frame(minHeight: 90)
-            .padding(.horizontal, 10)
-            .padding(.top, 6)
+        Group {
+            if let image = EnginePanelView.loadIcon(currentIcon) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .padding(10)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 100)
+        .background(NordColor.background)
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .animation(.easeInOut(duration: 0.15), value: currentIcon)
+    }
+
+    /// Icon from the app bundle; falls back to the source tree in dev builds.
+    private static func loadIcon(_ name: String) -> NSImage? {
+        if let url = Bundle.main.url(forResource: name, withExtension: nil),
+           let image = NSImage(contentsOf: url) { return image }
+        let dev = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().appendingPathComponent("Icons/\(name)")
+        return NSImage(contentsOf: dev)
     }
 
     private var pills: some View {

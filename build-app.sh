@@ -13,6 +13,7 @@ swift build -c release --package-path "$REPO"
 echo "→ Syncing bundle (binary, fonts, icon)…"
 cp "$REPO/.build/release/NordPianoApp" "$APP/Contents/MacOS/"
 cp "$REPO/Sources/NordPianoApp/Fonts/"*.ttf "$APP/Contents/Resources/"
+cp "$REPO/Sources/NordPianoApp/Icons/"* "$APP/Contents/Resources/"
 if [ -f "$SRC/Contents/Resources/AppIcon.icns" ]; then
   cp "$SRC/Contents/Resources/AppIcon.icns" "$APP/Contents/Resources/"
 fi
