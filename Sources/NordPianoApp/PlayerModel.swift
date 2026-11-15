@@ -57,6 +57,38 @@ final class PlayerModel: ObservableObject {
     /// Keys pressed on screen (so the keyboard shows UI touches even before voices sound).
     @Published var uiHeld: Set<Int> = []
 
+    // MARK: - Catalog (imported, categorized sounds)
+
+    /// The app-managed library of imported sounds, persisted as JSON.
+    @Published var catalog = SoundCatalog.load()
+
+    /// Import files into the catalog (copy into the managed library, classify by
+    /// name heuristics). Misclassified entries can be moved afterwards.
+    func importSounds(_ urls: [URL]) {
+        var ok = 0
+        for url in urls {
+            do {
+                _ = try catalog.importFile(at: url)
+                ok += 1
+            } catch {
+                status = "Import error: \(error.localizedDescription)"
+            }
+        }
+        try? catalog.save()
+        if ok > 0 { status = "Imported \(ok) sound\(ok == 1 ? "" : "s") into the library" }
+    }
+
+    func recategorize(_ entry: CatalogEntry, to category: SoundCategory, subcategory: PianoSubcategory? = nil) {
+        catalog.recategorize(entry, to: category, subcategory: subcategory)
+        try? catalog.save()
+    }
+
+    /// Bridge a catalog entry to the library row model (URL-keyed selection).
+    func pianoEntry(for entry: CatalogEntry) -> PianoEntry {
+        PianoEntry(url: URL(fileURLWithPath: entry.path), name: entry.name,
+                   version: entry.version, folder: "")
+    }
+
     // MARK: - Scenes
 
     /// A saved setup: which sounds are layered, their mixer state and the master

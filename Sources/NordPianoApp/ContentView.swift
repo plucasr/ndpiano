@@ -1,5 +1,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import NordPianoCore
+
+/// Left-panel navigation: engine boxes (PIANO/ORGAN/SYNTH read from the catalog)
+/// plus FILES for the classic folder-scanned library.
+private enum SidebarTab: String, CaseIterable {
+    case piano = "PIANO", organ = "ORGAN", synth = "SYNTH", files = "FILES"
+}
 
 struct ContentView: View {
     @EnvironmentObject private var model: PlayerModel
@@ -29,6 +36,10 @@ struct ContentView: View {
             }
         }
     }
+
+    @State private var sidebarTab: SidebarTab = .piano
+    /// Piano sub-navigation (GRAND/UPRIGHT/EP); nil = ALL.
+    @State private var pianoFilter: PianoSubcategory?
 
     /// Map a section title ("Root / subfolder") back to its library root URL.
     private func folderURL(for title: String) -> URL {
@@ -134,24 +145,196 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url { model.addFolder(url) }
     }
 
-    private var main: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                HStack {
-                    Text("LIBRARY")
-                        .font(NordFont.font(10, weight: .bold))
-                        .foregroundStyle(NordColor.subtext)
-                    Spacer()
+    /// Import files into the categorized catalog (copied into the managed library).
+    private func importFiles() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = ["npno", "nsmp3", "nsmp4"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowsMultipleSelection = true
+        panel.message = "Import sounds into the library (categorized by name — fix later via right-click)"
+        if panel.runModal() == .OK { model.importSounds(panel.urls) }
+    }
+
+    // MARK: - Sidebar (engine boxes + files)
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("LIBRARY")
+                    .font(NordFont.font(10, weight: .bold))
+                    .foregroundStyle(NordColor.subtext)
+                Spacer()
+                if sidebarTab == .files {
                     Button { addFolder() } label: {
                         Image(systemName: "plus").font(.caption)
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(NordColor.red)
                     .help("Add a folder of .npno pianos and .nsmp3/.nsmp4 samples to the library")
+                } else {
+                    Button { importFiles() } label: {
+                        Image(systemName: "square.and.arrow.down").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(NordColor.red)
+                    .help("Import .npno / .nsmp3 / .nsmp4 files into the categorized library")
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                if !model.sections.isEmpty {
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            tabBar
+            if sidebarTab == .piano { pianoSubBar }
+            sidebarContent
+        }
+        .frame(width: 240)
+    }
+
+    /// Engine tabs: the active one gets the red underline, Nord-panel-style.
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(SidebarTab.allCases, id: \.self) { tab in
+                Button {
+                    sidebarTab = tab
+                } label: {
+                    VStack(spacing: 3) {
+                        Text(tab.rawValue)
+                            .font(NordFont.font(9, weight: .bold))
+                            .foregroundStyle(sidebarTab == tab ? NordColor.red : NordColor.subtext)
+                        Rectangle()
+                            .fill(sidebarTab == tab ? NordColor.red : Color.clear)
+                            .frame(height: 2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 4)
+    }
+
+    /// GRAND / UPRIGHT / EP sub-navigation inside the Piano engine.
+    private var pianoSubBar: some View {
+        HStack(spacing: 6) {
+            subButton("ALL", active: pianoFilter == nil) { pianoFilter = nil }
+            ForEach(PianoSubcategory.allCases, id: \.self) { sub in
+                subButton(sub.rawValue.uppercased(), active: pianoFilter == sub) { pianoFilter = sub }
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 6)
+    }
+
+    private func subButton(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(NordFont.font(8, weight: .semibold))
+                .foregroundStyle(active ? Color.black : NordColor.subtext)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(active ? NordColor.red : NordColor.card)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var sidebarContent: some View {
+        switch sidebarTab {
+        case .files:
+            filesList
+        case .piano:
+            catalogList(entries: model.catalog.entries(in: .piano, subcategory: pianoFilter),
+                        emptyLabel: pianoFilter == nil ? "pianos" : "\(pianoFilter!.rawValue)s")
+        case .organ:
+            catalogList(entries: model.catalog.entries(in: .organ), emptyLabel: "organs")
+        case .synth:
+            // "other" lands here too — unclassified samples are usually synth fodder.
+            catalogList(entries: model.catalog.entries(in: .synth) + model.catalog.entries(in: .other),
+                        emptyLabel: "synths")
+        }
+    }
+
+    /// Catalog rows for one engine box; click layers the sound, right-click fixes
+    /// a wrong auto-classification.
+    private func catalogList(entries: [CatalogEntry], emptyLabel: String) -> some View {
+        Group {
+            if entries.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Text("No \(emptyLabel) yet")
+                        .font(.callout).foregroundStyle(NordColor.text)
+                    Button("Import…") { importFiles() }
+                        .buttonStyle(.bordered).tint(.gray)
+                    Text("or drop files anywhere to play them once")
+                        .font(.caption).foregroundStyle(NordColor.subtext)
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                List(selection: .constant(Set<URL>())) {
+                    ForEach(entries) { entry in
+                        catalogRow(entry)
+                            .listRowBackground(model.selected.contains(model.pianoEntry(for: entry))
+                                               ? NordColor.red.opacity(0.18) : NordColor.card)
+                    }
+                }
+                .listStyle(.sidebar)
+            }
+        }
+    }
+
+    private func catalogRow(_ entry: CatalogEntry) -> some View {
+        let pianoEntry = model.pianoEntry(for: entry)
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.name).font(.callout).foregroundStyle(NordColor.text)
+                Text("v\(entry.version)")
+                    .font(.caption2).foregroundStyle(NordColor.subtext)
+            }
+            Spacer()
+            if model.selected.contains(pianoEntry) && model.selected.count > 1 {
+                Slider(value: Binding(
+                    get: { Double(model.gains[pianoEntry.url] ?? 1) },
+                    set: { model.setGain(Float($0), for: pianoEntry) }
+                ), in: 0...1.5)
+                .tint(NordColor.red)
+                .frame(width: 70)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.select(pianoEntry) }
+        .contextMenu {
+            Menu("Move to…") {
+                ForEach(SoundCategory.allCases, id: \.self) { cat in
+                    if cat != entry.category {
+                        Button(cat.rawValue.capitalized) { model.recategorize(entry, to: cat) }
+                    }
+                }
+            }
+            if entry.category == .piano {
+                Menu("Piano type…") {
+                    ForEach(PianoSubcategory.allCases, id: \.self) { sub in
+                        if sub != entry.subcategory {
+                            Button(sub.rawValue.capitalized) {
+                                model.recategorize(entry, to: .piano, subcategory: sub)
+                            }
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
+            }
+        }
+    }
+
+    /// FILES tab: the classic folder-scanned library, unchanged.
+    private var filesList: some View {
+        Group {
+            if !model.sections.isEmpty {
                 List(selection: .constant(Set<URL>())) {
                     ForEach(model.sections, id: \.title) { section in
                         Section(header: HStack {
@@ -182,22 +365,26 @@ struct ContentView: View {
                     }
                 }
                 .listStyle(.sidebar)
-                } else {
-                    VStack(spacing: 8) {
-                        Spacer()
-                        Text("No sounds yet")
-                            .font(.callout).foregroundStyle(NordColor.text)
-                        Button("Add Folder…") { addFolder() }
-                            .buttonStyle(.bordered).tint(.gray)
-                        Text("or drop a .npno / .nsmp4 file anywhere")
-                            .font(.caption).foregroundStyle(NordColor.subtext)
-                            .multilineTextAlignment(.center)
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity)
+            } else {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Text("No folders added")
+                        .font(.callout).foregroundStyle(NordColor.text)
+                    Button("Add Folder…") { addFolder() }
+                        .buttonStyle(.bordered).tint(.gray)
+                    Text("or drop a .npno / .nsmp4 file anywhere")
+                        .font(.caption).foregroundStyle(NordColor.subtext)
+                        .multilineTextAlignment(.center)
+                    Spacer()
                 }
+                .frame(maxWidth: .infinity)
             }
-            .frame(width: 240)
+        }
+    }
+
+    private var main: some View {
+        HStack(spacing: 0) {
+            sidebar
             Divider().overlay(NordColor.red.opacity(0.25))
             VStack(spacing: 12) {
             HStack(spacing: 16) {
