@@ -81,3 +81,36 @@ final class PianoPlayerSlotTests: XCTestCase {
         XCTAssertTrue(player.markers.count > pianoMarkers.count)
     }
 }
+
+final class LayerFXCodableTests: XCTestCase {
+    /// FX persisted before the synth modifiers existed must decode with the new
+    /// fields at their defaults, not fail.
+    func testLegacyJSONDecodesWithSynthDefaults() throws {
+        let legacy = """
+        {"filterOn":true,"filterNorm":0.5,"compOn":false,"compAmount":0.3,
+         "driveOn":false,"driveNorm":0.3,"driveMix":0.5,
+         "delayOn":false,"delayTime":0.25,"delayFeedback":0.3,"delayMix":0.2,
+         "reverbOn":true,"reverbMix":0.4,"reverbSize":0.3,
+         "attackNorm":0.1,"releaseGain":0.5,"eqLow":0.2,"eqMid":0,"eqHigh":-0.1}
+        """.data(using: .utf8)!
+        let fx = try JSONDecoder().decode(PianoPlayer.LayerFX.self, from: legacy)
+        XCTAssertTrue(fx.filterOn)
+        XCTAssertEqual(fx.eqLow, 0.2)
+        XCTAssertFalse(fx.oneShot)
+        XCTAssertFalse(fx.monoOn)
+        XCTAssertEqual(fx.glideNorm, 0)
+        XCTAssertEqual(fx.lfoDepth, 0)
+        XCTAssertEqual(fx.lfoRate, 0.3)
+    }
+
+    func testRoundTripKeepsSynthFields() throws {
+        var fx = PianoPlayer.LayerFX()
+        fx.oneShot = true
+        fx.monoOn = true
+        fx.glideNorm = 0.6
+        fx.lfoDepth = 0.7
+        fx.lfoRate = 0.9
+        let data = try JSONEncoder().encode(fx)
+        XCTAssertEqual(try JSONDecoder().decode(PianoPlayer.LayerFX.self, from: data), fx)
+    }
+}

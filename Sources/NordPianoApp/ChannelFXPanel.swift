@@ -124,6 +124,46 @@ struct ChannelFXPanel: View {
                         ), caption: "SIZE") { _ in String(format: "%.1f", 0.3 + fx.reverbSize * 6.7) + "s" }
                     }
                 }
+
+                // Synth-section modifiers: only for channels whose sound came
+                // from the catalog's synth box (pianos/organs keep the classic chain).
+                if model.catalogEntry(for: channel.entry.url)?.category == .synth {
+                    section(label: "MODE", isOn: Binding(
+                        get: { fx.oneShot }, set: { v in update { $0.oneShot = v } }
+                    )) {
+                        Text("ONE-SHOT")
+                            .font(NordFont.font(7, weight: .medium))
+                            .foregroundStyle(NordColor.subtext)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 46)
+                    }
+                    .effectDivider()
+
+                    section(label: "MONO", isOn: Binding(
+                        get: { fx.monoOn }, set: { v in update { $0.monoOn = v } }
+                    )) {
+                        panelKnob(value: Binding(
+                            get: { fx.glideNorm }, set: { v in update { $0.glideNorm = v } }
+                        ), caption: "GLIDE") { n in
+                            n <= 0.01 ? "off" : "\(Int(400 * n))ms"
+                        }
+                    }
+                    .effectDivider()
+
+                    section(label: "LFO", isOn: Binding(
+                        get: { fx.lfoDepth > 0 },
+                        set: { on in update { $0.lfoDepth = on ? max(0.3, $0.lfoDepth) : 0 } }
+                    )) {
+                        HStack(spacing: 12) {
+                            panelKnob(value: Binding(
+                                get: { fx.lfoDepth }, set: { v in update { $0.lfoDepth = v } }
+                            ), caption: "DEPTH") { "\(Int($0 * 100))%" }
+                            panelKnob(value: Binding(
+                                get: { fx.lfoRate }, set: { v in update { $0.lfoRate = v } }
+                            ), caption: "RATE") { n in String(format: "%.1f", 1 + n * 9) + "Hz" }
+                        }
+                    }
+                }
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }

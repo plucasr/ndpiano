@@ -21,6 +21,12 @@ private struct Voice {
     var loopEnd: Double = 0
     var hasLoop = false
     var loopDecayPerFrame: Float = 1
+    /// One-shot: ignores note-off, plays to the sample end.
+    var oneShot = false
+    /// Glide: actual rate slides from the previous note toward `rate`
+    /// (0 = no glide, use rate). Per-frame approach coefficient.
+    var currentRate: Double = 0
+    var glideCoef: Double = 0
 }
 
 /// A decoded stroke ready for playback (piano or sample).
@@ -136,7 +142,53 @@ public final class PianoPlayer {
         public var eqLow: Double = 0
         public var eqMid: Double = 0
         public var eqHigh: Double = 0
+        // Synth-section modifiers (not shown for piano/organ channels):
+        /// One-shot: notes play to the sample end even after key-up. Zones can
+        /// also request this themselves (nsmp zoneIsOneShot flag).
+        public var oneShot = false
+        /// Mono mode: one voice at a time — new notes choke the previous one.
+        public var monoOn = false
+        /// Glide (portamento) time 0…1 → 0…400 ms, exponential approach. Mono only.
+        public var glideNorm: Double = 0
+        /// Per-channel vibrato LFO: depth 0…1 and rate 0…1 → 1…10 Hz. Adds to the
+        /// global CC1 tremolo (5 Hz) when both are on.
+        public var lfoDepth: Double = 0
+        public var lfoRate: Double = 0.3
         public init() {}
+
+        /// Backward-compatible decoding: fields added after the first persisted
+        /// version fall back to their defaults instead of failing the decode.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            func get<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+                try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+            }
+            let fresh = LayerFX()
+            filterOn = try get(.filterOn, fresh.filterOn)
+            filterNorm = try get(.filterNorm, fresh.filterNorm)
+            compOn = try get(.compOn, fresh.compOn)
+            compAmount = try get(.compAmount, fresh.compAmount)
+            driveOn = try get(.driveOn, fresh.driveOn)
+            driveNorm = try get(.driveNorm, fresh.driveNorm)
+            driveMix = try get(.driveMix, fresh.driveMix)
+            delayOn = try get(.delayOn, fresh.delayOn)
+            delayTime = try get(.delayTime, fresh.delayTime)
+            delayFeedback = try get(.delayFeedback, fresh.delayFeedback)
+            delayMix = try get(.delayMix, fresh.delayMix)
+            reverbOn = try get(.reverbOn, fresh.reverbOn)
+            reverbMix = try get(.reverbMix, fresh.reverbMix)
+            reverbSize = try get(.reverbSize, fresh.reverbSize)
+            attackNorm = try get(.attackNorm, fresh.attackNorm)
+            releaseGain = try get(.releaseGain, fresh.releaseGain)
+            eqLow = try get(.eqLow, fresh.eqLow)
+            eqMid = try get(.eqMid, fresh.eqMid)
+            eqHigh = try get(.eqHigh, fresh.eqHigh)
+            oneShot = try get(.oneShot, fresh.oneShot)
+            monoOn = try get(.monoOn, fresh.monoOn)
+            glideNorm = try get(.glideNorm, fresh.glideNorm)
+            lfoDepth = try get(.lfoDepth, fresh.lfoDepth)
+            lfoRate = try get(.lfoRate, fresh.lfoRate)
+        }
     }
 
     /// One CoreAudio output device (audio interface / built-in).
@@ -792,6 +844,7 @@ public final class PianoPlayer {
             lock.lock()
             let fx = channels[layer.id]?.fx ?? pendingFX[layer.id] ?? LayerFX()
             lock.unlock()
+            v.oneShot = picked.oneShot || fx.oneShot
             let attackSec = 0.3 * fx.attackNorm * fx.attackNorm
             if attackSec > 0.001 {
                 v.env = 0
@@ -799,6 +852,25 @@ public final class PianoPlayer {
             }
             let semitones = Double(note - picked.rootKey)
             v.rate = pow(2, semitones / 12) * (picked.stroke.sampleRate / outRate)
+            // Mono: choke the previous voice; glide starts the new voice at its rate.
+            var glideFrom: Double?
+            if fx.monoOn {
+                lock.lock()
+                if let channel = channels[layer.id] {
+                    for i in channel.voices.indices where !channel.voices[i].releasing {
+                        glideFrom = channel.voices[i].currentRate > 0
+                            ? channel.voices[i].currentRate : channel.voices[i].rate
+                        channel.voices[i].releasing = true
+                        channel.voices[i].env *= 0.5 // fast hand-off, not a full release tail
+                    }
+                }
+                lock.unlock()
+            }
+            if let glideFrom, fx.glideNorm > 0.01 {
+                v.currentRate = glideFrom
+                let glideSeconds = 0.4 * fx.glideNorm
+                v.glideCoef = 1 / (glideSeconds * outRate)
+            }
             if let loop = picked.stroke.loop {
                 v.hasLoop = true
                 v.loopStart = Double(loop.start)
@@ -827,7 +899,8 @@ public final class PianoPlayer {
     public func noteOff(_ note: Int) {
         lock.lock()
         for channel in channels.values {
-            for i in channel.voices.indices where channel.voices[i].note == note && !channel.voices[i].releasing {
+            for i in channel.voices.indices
+            where channel.voices[i].note == note && !channel.voices[i].releasing && !channel.voices[i].oneShot {
                 if sustainPedal { channel.voices[i].sustained = true } else { channel.voices[i].releasing = true }
             }
         }
@@ -921,18 +994,18 @@ public final class PianoPlayer {
     /// Pick the stroke + root key for a note on one layer: piano zones route through
     /// the layer table and velocity floors; sample zones match key range + velocity
     /// range directly and name their stroke by global id.
-    private func pickStroke(_ layer: Layer, note: Int, velocity: Int) -> (stroke: CachedStroke, rootKey: Int)? {
+    private func pickStroke(_ layer: Layer, note: Int, velocity: Int) -> (stroke: CachedStroke, rootKey: Int, oneShot: Bool)? {
         switch layer.source {
         case .piano(let bytes, let dir, let zones):
             guard let key = pianoKey(zones, midi: note),
                   let stroke = strokeFor(dir, zone: key.zone, velocity: velocity) else { return nil }
             return (cachedOrDecodePiano(layer, stroke, bytes: bytes, dir: dir),
-                    zones[key.zone].rootNote + Nsp.rootOffset)
+                    zones[key.zone].rootNote + Nsp.rootOffset, false)
         case .sample(let bytes, let zones):
             guard let zone = nsmpZone(for: note, velocity: velocity, in: zones) else { return nil }
             let strokes = cachedOrDecodeSample(layer, bytes: bytes)
             guard let stroke = strokes[zone.globalID] else { return nil }
-            return (stroke, zone.rootKey)
+            return (stroke, zone.rootKey, zone.zoneIsOneShot != 0)
         }
     }
 
@@ -999,9 +1072,13 @@ public final class PianoPlayer {
         guard let channel = channels[channelID] else { lock.unlock(); return }
         let master = masterGain * boostLinear
         let bendMul = Float(pow(2, pitchBendSemis / 12))
-        let tremolo = tremoloDepth
-        renderVoices(&channel.voices, master: master, bendMul: bendMul, tremoloDepth: tremolo,
-                     lfoPhase: &channel.lfoPhase, intoL: outL, r: outR, frames: frames)
+        // Channel LFO (synth section) sums with the global mod-wheel tremolo;
+        // its rate knob wins when the channel LFO is on, else the classic 5 Hz.
+        let fx = channel.fx
+        let depth = min(1, tremoloDepth + Float(fx.lfoDepth))
+        let lfoHz = fx.lfoDepth > 0 ? 1 + fx.lfoRate * 9 : 5
+        renderVoices(&channel.voices, master: master, bendMul: bendMul, tremoloDepth: depth,
+                     lfoHz: lfoHz, lfoPhase: &channel.lfoPhase, intoL: outL, r: outR, frames: frames)
 
         // Aggregate across channels; notify only when the sounding set changes.
         var all: Set<Int> = []
@@ -1020,10 +1097,10 @@ public final class PianoPlayer {
     /// finished voices are removed, survivors keep their advanced position.
     /// Caller must hold `lock` (noteOff/sustain mark these same structs).
     private func renderVoices(_ voices: inout [Voice], master: Float, bendMul: Float,
-                              tremoloDepth: Float, lfoPhase: inout Double,
+                              tremoloDepth: Float, lfoHz: Double, lfoPhase: inout Double,
                               intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
         let releaseStep = Float(exp(-1 / (releaseTau * outRate)))
-        let lfoStep = 2 * Double.pi * 5 / outRate // 5 Hz tremolo
+        let lfoStep = 2 * Double.pi * lfoHz / outRate
         var vi = voices.startIndex
         while vi < voices.endIndex {
             var v = voices[vi]
@@ -1063,7 +1140,12 @@ public final class PianoPlayer {
                     : l
                 outL[frame] += l
                 outR[frame] += r
-                v.pos += v.rate * Double(bendMul)
+                let rateNow = v.currentRate > 0 ? v.currentRate : v.rate
+                v.pos += rateNow * Double(bendMul)
+                if v.currentRate > 0 {
+                    v.currentRate += (v.rate - v.currentRate) * v.glideCoef
+                    if abs(v.currentRate - v.rate) < 0.002 * v.rate { v.currentRate = 0 } // arrived
+                }
                 if v.hasLoop && v.pos >= v.loopStart && v.pos < v.loopEnd {
                     v.gain *= v.loopDecayPerFrame
                 }
