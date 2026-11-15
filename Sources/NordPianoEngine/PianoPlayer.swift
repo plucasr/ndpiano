@@ -565,6 +565,105 @@ public final class PianoPlayer {
         setBypass(delayUnit, !enabled)
     }
 
+    // MARK: - Recording (tap on the master chain tail → WAV)
+
+    private var recordFile: AVAudioFile?
+    private let recordLock = NSLock()
+    /// Peak level (0…1) of each recorded buffer, for the UI waveform. ~10/sec.
+    var onRecordLevel: (@Sendable (Float) -> Void)?
+
+    public var isRecording: Bool {
+        recordLock.lock(); defer { recordLock.unlock() }
+        return recordFile != nil
+    }
+
+    /// Record the master bus (post-FX, exactly what the speakers get) to a 16-bit
+    /// stereo WAV. The tap runs on the engine's worker thread, not the real-time
+    /// render thread, so file I/O there is safe; playback is unaffected.
+    public func startRecording(to url: URL) throws {
+        guard engine.isRunning, let tail = reverbUnit else {
+            throw NSError(domain: "nordpiano", code: 5, userInfo: [NSLocalizedDescriptionKey: "audio engine not running"])
+        }
+        stopRecording()
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: outRate,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        recordLock.lock()
+        recordFile = file
+        recordLock.unlock()
+        // Tap in the file's processing format so buffers arrive already converted.
+        tail.installTap(onBus: 0, bufferSize: 4096, format: file.processingFormat) { [weak self] buffer, _ in
+            guard let self else { return }
+            self.recordLock.lock()
+            let f = self.recordFile
+            self.recordLock.unlock()
+            if let f { try? f.write(from: buffer) }
+            // Report a per-buffer peak (strided — this is a meter, not an analysis).
+            if let handler = self.onRecordLevel, let ch = buffer.int16ChannelData {
+                let data = ch[0]
+                let n = Int(buffer.frameLength) * Int(buffer.format.channelCount)
+                var peak: Int32 = 0
+                var i = 0
+                while i < n {
+                    let v = abs(Int32(data[i]))
+                    if v > peak { peak = v }
+                    i += 8
+                }
+                handler(Float(peak) / 32768)
+            }
+        }
+    }
+
+    // MARK: - Take playback (preview a recorded WAV through the main mixer, i.e.
+    // the master FX chain processes it again on top of what's baked in)
+
+    private var takeNode: AVAudioPlayerNode?
+    /// Fired on a background thread when a take plays through to the end (not on
+    /// early stop — the completion uses .dataPlayedBack).
+    var onTakeEnded: (@Sendable () -> Void)?
+
+    public var isPlayingTake: Bool { takeNode?.isPlaying ?? false }
+
+    public func playTake(url: URL) throws {
+        guard engine.isRunning else {
+            throw NSError(domain: "nordpiano", code: 6, userInfo: [NSLocalizedDescriptionKey: "audio engine not running"])
+        }
+        stopTake()
+        let file = try AVAudioFile(forReading: url)
+        let node = AVAudioPlayerNode()
+        engine.attach(node)
+        // Route through the main mixer (multi-input) — NOT the output node, whose
+        // single input bus is already taken by the master FX chain; forcing a
+        // second connection onto it deadlocks the render graph.
+        engine.connect(node, to: engine.mainMixerNode, format: file.processingFormat)
+        takeNode = node
+        node.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            self?.onTakeEnded?()
+        }
+        node.play()
+    }
+
+    public func stopTake() {
+        guard let node = takeNode else { return }
+        node.stop()
+        engine.disconnectNodeOutput(node)
+        engine.detach(node)
+        takeNode = nil
+    }
+
+    public func stopRecording() {
+        reverbUnit?.removeTap(onBus: 0)
+        recordLock.lock()
+        recordFile = nil
+        recordLock.unlock()
+    }
+
     // MARK: - MIDI
 
     private var midiClient: MIDIClientRef?
@@ -984,5 +1083,13 @@ public extension PianoPlayer {
     var soundingNotesHandler: (@Sendable (Set<Int>) -> Void)? {
         get { onSoundingNotes }
         set { onSoundingNotes = newValue }
+    }
+    var recordLevelHandler: (@Sendable (Float) -> Void)? {
+        get { onRecordLevel }
+        set { onRecordLevel = newValue }
+    }
+    var takeEndedHandler: (@Sendable () -> Void)? {
+        get { onTakeEnded }
+        set { onTakeEnded = newValue }
     }
 }

@@ -206,7 +206,7 @@ final class PlayerModel: ObservableObject {
         selected = selected.filter { sel in entries.contains(sel) || FileManager.default.fileExists(atPath: sel.url.path) }
         if selected.isEmpty, let first = entries.first { selected = [first] }
         status = roots.isEmpty
-            ? "Add a folder (Folder…), or drop a .npno / .nsmp4"
+            ? "Add a folder (+ in the library sidebar), or drop a .npno / .nsmp4"
             : "\(entries.count) sounds in \(roots.count) folder\(roots.count == 1 ? "" : "s") — click to play, click again to layer"
         syncLayers()
     }
@@ -356,6 +356,105 @@ final class PlayerModel: ObservableObject {
             return true
         }
         return false
+    }
+
+    // MARK: - Recording
+
+    @Published var isRecording = false
+    /// Seconds since the current take started (UI readout).
+    @Published var recordingSeconds = 0
+    /// The most recent finished take (shown in the take bar for playback).
+    @Published var lastTake: URL?
+    @Published var isPlayingTake = false
+    /// Per-buffer peaks of the recording — the take bar's waveform (capped).
+    @Published var recordLevels: [Float] = []
+    private var recordTimer: Timer?
+    private var recordURL: URL?
+
+    /// Toggle a take: start recording the master bus to a timestamped WAV in
+    /// ~/Music/nordpiano, or stop and keep the file. Starts the engine if needed
+    /// so a take can begin before any sound is loaded (it records silence).
+    func toggleRecording() {
+        if isRecording {
+            player?.stopRecording()
+            recordTimer?.invalidate()
+            recordTimer = nil
+            isRecording = false
+            lastTake = recordURL
+            status = "Take saved to ~/Music/nordpiano"
+            return
+        }
+        do {
+            _ = try ensureEngine()
+            let dir = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Music/nordpiano", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let stamp = Date().formatted(.dateTime.year().month(.twoDigits).day(.twoDigits)
+                .hour(.twoDigits(amPM: .omitted)).minute(.twoDigits).second(.twoDigits))
+                .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "")
+            let url = dir.appendingPathComponent("take-\(stamp).wav")
+            player?.stopTake()
+            isPlayingTake = false
+            lastTake = nil
+            recordLevels = []
+            player?.recordLevelHandler = { [weak self] level in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, self.isRecording else { return }
+                        self.recordLevels.append(level)
+                        if self.recordLevels.count > 1200 { self.recordLevels.removeFirst(self.recordLevels.count - 1200) }
+                    }
+                }
+            }
+            try player?.startRecording(to: url)
+            recordURL = url
+            recordingSeconds = 0
+            isRecording = true
+            status = "Recording — \(url.lastPathComponent)"
+            recordTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.recordingSeconds += 1 }
+            }
+        } catch {
+            status = "Record error: \(error.localizedDescription)"
+        }
+    }
+
+    /// Play/stop the last take. Routes through the main mixer, so any master FX
+    /// currently on are applied again on top of the ones baked into the take.
+    func toggleTakePlayback() {
+        if isPlayingTake {
+            player?.stopTake()
+            isPlayingTake = false
+            return
+        }
+        guard let url = lastTake else { return }
+        player?.takeEndedHandler = { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.player?.stopTake()
+                    self?.isPlayingTake = false
+                }
+            }
+        }
+        do {
+            try player?.playTake(url: url)
+            isPlayingTake = true
+        } catch {
+            status = "Playback error: \(error.localizedDescription)"
+        }
+    }
+
+    /// Show the saved take in Finder.
+    func revealTake() {
+        if let lastTake { NSWorkspace.shared.activateFileViewerSelecting([lastTake]) }
+    }
+
+    /// Close the take bar (the file stays in ~/Music/nordpiano).
+    func dismissTake() {
+        player?.stopTake()
+        isPlayingTake = false
+        lastTake = nil
+        recordLevels = []
     }
 
     func noteOn(_ note: Int) {

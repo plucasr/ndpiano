@@ -91,9 +91,34 @@ struct ContentView: View {
         .background(NordColor.card)
     }
 
+    /// Shared by the sidebar `+` button and the empty-library state.
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.message = "Add a folder of .npno pianos and .nsmp3/.nsmp4 samples to the library"
+        if panel.runModal() == .OK, let url = panel.url { model.addFolder(url) }
+    }
+
     private var main: some View {
         HStack(spacing: 0) {
-            if !model.sections.isEmpty {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("LIBRARY")
+                        .font(NordFont.font(10, weight: .bold))
+                        .foregroundStyle(NordColor.subtext)
+                    Spacer()
+                    Button { addFolder() } label: {
+                        Image(systemName: "plus").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(NordColor.red)
+                    .help("Add a folder of .npno pianos and .nsmp3/.nsmp4 samples to the library")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                if !model.sections.isEmpty {
                 List(selection: .constant(Set<URL>())) {
                     ForEach(model.sections, id: \.title) { section in
                         Section(header: HStack {
@@ -124,24 +149,29 @@ struct ContentView: View {
                     }
                 }
                 .listStyle(.sidebar)
-                .frame(width: 240)
-                Divider().overlay(NordColor.red.opacity(0.25))
+                } else {
+                    VStack(spacing: 8) {
+                        Spacer()
+                        Text("No sounds yet")
+                            .font(.callout).foregroundStyle(NordColor.text)
+                        Button("Add Folder…") { addFolder() }
+                            .buttonStyle(.bordered).tint(.gray)
+                        Text("or drop a .npno / .nsmp4 file anywhere")
+                            .font(.caption).foregroundStyle(NordColor.subtext)
+                            .multilineTextAlignment(.center)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             }
+            .frame(width: 240)
+            Divider().overlay(NordColor.red.opacity(0.25))
             VStack(spacing: 12) {
             HStack(spacing: 16) {
                 Spacer()
-                Button("Folder…") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseDirectories = true
-                    panel.canChooseFiles = false
-                    panel.allowsMultipleSelection = false
-                    panel.message = "Add a folder of .npno pianos and .nsmp3/.nsmp4 samples to the library"
-                    if panel.runModal() == .OK, let url = panel.url { model.addFolder(url) }
-                }
-                .buttonStyle(.bordered)
-                .tint(.gray)
                 keyboardToggle
                 devicesMenu
+                recordButton
                 Button("Open…") {
                     let panel = NSOpenPanel()
                     panel.allowedContentTypes = ["npno", "nsmp3", "nsmp4"].compactMap { UTType(filenameExtension: $0) }
@@ -150,7 +180,9 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(NordColor.red)
+                .help("Play a .npno / .nsmp3 / .nsmp4 file once, without adding it to the library")
             }
+            if model.isRecording || model.lastTake != nil { takeBar }
             fxStrip
             MixerView()
             if model.showKeyboard {
@@ -177,6 +209,68 @@ struct ContentView: View {
         }
         .toggleStyle(PillToggleStyle(onColor: NordColor.red))
         .help(model.showKeyboard ? "Hide keyboard" : "Show keyboard")
+    }
+
+    /// Take recorder: captures the master bus (what you hear) to a WAV in
+    /// ~/Music/nordpiano. Red with a running clock while a take is rolling.
+    private var recordButton: some View {
+        HStack(spacing: 6) {
+            Button { model.toggleRecording() } label: {
+                Image(systemName: model.isRecording ? "stop.circle.fill" : "record.circle")
+            }
+            .buttonStyle(.bordered)
+            .tint(model.isRecording ? NordColor.red : .gray)
+            .help(model.isRecording
+                  ? "Stop recording and save the take"
+                  : "Record what you play to a WAV in ~/Music/nordpiano")
+        }
+    }
+
+    /// Track strip: REC clock + live waveform while recording; play/stop, name,
+    /// reveal-in-Finder and dismiss once the take is done.
+    private var takeBar: some View {
+        HStack(spacing: 10) {
+            if model.isRecording {
+                Circle().fill(NordColor.red).frame(width: 8, height: 8)
+                Text(String(format: "REC %d:%02d", model.recordingSeconds / 60, model.recordingSeconds % 60))
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(NordColor.red)
+            } else {
+                Button { model.toggleTakePlayback() } label: {
+                    Image(systemName: model.isPlayingTake ? "stop.fill" : "play.fill")
+                        .font(NordFont.font(11))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(NordColor.red)
+                .help(model.isPlayingTake ? "Stop" : "Play the take")
+                Text(model.lastTake?.lastPathComponent ?? "")
+                    .font(NordFont.font(10, weight: .medium))
+                    .foregroundStyle(NordColor.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Waveform(levels: model.recordLevels)
+                .frame(height: 28)
+                .frame(maxWidth: .infinity)
+            if !model.isRecording {
+                Button { model.revealTake() } label: {
+                    Image(systemName: "magnifyingglass").font(NordFont.font(10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(NordColor.subtext)
+                .help("Reveal in Finder")
+                Button { model.dismissTake() } label: {
+                    Image(systemName: "xmark").font(NordFont.font(10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(NordColor.subtext)
+                .help("Dismiss (the file stays in ~/Music/nordpiano)")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(NordColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     /// Audio output + MIDI input pickers (audio interfaces, keyboard controllers).
@@ -341,12 +435,36 @@ struct ContentView: View {
             .font(NordFont.font(9))
             .foregroundStyle(NordColor.subtext)
             .lineLimit(1)
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            Button("Quit") {
+                if model.isRecording { model.toggleRecording() } // finalize the WAV
+                NSApplication.shared.terminate(nil)
+            }
                 .buttonStyle(.bordered).tint(.gray)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(NordColor.card)
+    }
+}
+
+/// Bar-graph waveform from per-buffer peak levels; newest bars pin to the
+/// right edge so a recording grows leftward from the live edge.
+private struct Waveform: View {
+    let levels: [Float]
+
+    var body: some View {
+        GeometryReader { geo in
+            let capacity = max(1, Int(geo.size.width / 3))
+            let bars = levels.suffix(capacity)
+            HStack(alignment: .center, spacing: 1) {
+                ForEach(Array(bars.enumerated()), id: \.offset) { _, level in
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(NordColor.red)
+                        .frame(width: 2, height: max(2, CGFloat(min(1, level)) * geo.size.height))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        }
     }
 }
 
