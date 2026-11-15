@@ -5,6 +5,10 @@ import CoreMIDI
 import NordPianoCore
 import NordPianoEngine
 
+private extension Array {
+    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
+}
+
 @MainActor
 final class PlayerModel: ObservableObject {
     struct PianoEntry: Identifiable, Hashable {
@@ -127,6 +131,10 @@ final class PlayerModel: ObservableObject {
         var name: String
         /// Layer file paths, in the order they were selected.
         var sounds: [String]
+        /// Catalog IDs parallel to `sounds` (nil element = sound not in the
+        /// catalog). Resolution prefers the ID — immune to the managed library
+        /// moving — and falls back to the path. Optional for pre-catalog scenes.
+        var soundIDs: [UUID?]? = nil
         var gains: [String: Float] = [:]
         var muted: [String] = []
         var layerFX: [String: PianoPlayer.LayerFX] = [:]
@@ -149,9 +157,11 @@ final class PlayerModel: ObservableObject {
         fx.reverbOn = reverbOn; fx.reverbMix = reverbMix; fx.reverbSize = reverbSize
         fx.boostDb = boostDb
         let urls = channels.map(\.entry.url) // channel order, not set order
+        let catalogByPath = Dictionary(uniqueKeysWithValues: catalog.entries.map { ($0.path, $0.id) })
         return Scene(
             name: name,
             sounds: urls.map(\.path),
+            soundIDs: urls.map { catalogByPath[$0.path] },
             gains: Dictionary(uniqueKeysWithValues: urls.compactMap { u in gains[u].map { (u.path, $0) } }),
             muted: muted.map(\.path),
             layerFX: Dictionary(uniqueKeysWithValues: urls.compactMap { u in layerFX[u].map { (u.path, $0) } }),
@@ -185,9 +195,20 @@ final class PlayerModel: ObservableObject {
     func applyScene(_ scene: Scene) {
         var entries: [PianoEntry] = []
         var missing = 0
-        for path in scene.sounds {
+        for (i, storedPath) in scene.sounds.enumerated() {
+            // Prefer the catalog ID: resolves to the entry's CURRENT path even
+            // if the managed library moved since the scene was saved.
+            let path: String
+            if let id = scene.soundIDs?[safe: i] ?? nil,
+               let entry = catalog.entries.first(where: { $0.id == id }) {
+                path = entry.path
+            } else {
+                path = storedPath
+            }
             if let entry = library.first(where: { $0.url.path == path }) {
                 entries.append(entry)
+            } else if let catalogEntry = catalog.entries.first(where: { $0.path == path }) {
+                entries.append(pianoEntry(for: catalogEntry))
             } else if FileManager.default.fileExists(atPath: path) {
                 let url = URL(fileURLWithPath: path)
                 entries.append(PianoEntry(url: url, name: url.deletingPathExtension().lastPathComponent,
