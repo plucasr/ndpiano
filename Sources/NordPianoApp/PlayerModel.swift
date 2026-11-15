@@ -102,6 +102,17 @@ final class PlayerModel: ObservableObject {
         try? catalog.save()
     }
 
+    /// Catalog entry for a loaded sound's URL, if the sound came from the catalog.
+    func catalogEntry(for url: URL) -> CatalogEntry? {
+        catalog.entries.first { $0.path == url.path }
+    }
+
+    /// The channel currently holding a sound of this engine category (the
+    /// panel's "loaded slot" card), if any.
+    func loadedChannel(in category: SoundCategory) -> ChannelState? {
+        channels.first { catalogEntry(for: $0.entry.url)?.category == category }
+    }
+
     /// Bridge a catalog entry to the library row model (URL-keyed selection).
     func pianoEntry(for entry: CatalogEntry) -> PianoEntry {
         PianoEntry(url: URL(fileURLWithPath: entry.path), name: entry.name,

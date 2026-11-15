@@ -107,7 +107,8 @@ private struct ChannelStrip: View {
 }
 
 /// Vertical volume fader: custom track + thumb (a rotated Slider never lays out right).
-private struct Fader: View {
+/// Shared by the mixer strips and the scenes column's MASTER fader.
+struct Fader: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
 

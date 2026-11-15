@@ -2,12 +2,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 import NordPianoCore
 
-/// Left-panel navigation: engine boxes (PIANO/ORGAN/SYNTH read from the catalog)
-/// plus FILES for the classic folder-scanned library.
-private enum SidebarTab: String, CaseIterable {
-    case piano = "PIANO", organ = "ORGAN", synth = "SYNTH", files = "FILES"
-}
-
 struct ContentView: View {
     @EnvironmentObject private var model: PlayerModel
     @State private var isDropTarget = false
@@ -37,9 +31,8 @@ struct ContentView: View {
         }
     }
 
-    @State private var sidebarTab: SidebarTab = .piano
-    /// Piano sub-navigation (GRAND/UPRIGHT/EP); nil = ALL.
-    @State private var pianoFilter: PianoSubcategory?
+    /// FILES view (folder-scanned library) replaces the engine panels when on.
+    @State private var showFiles = false
 
     /// Map a section title ("Root / subfolder") back to its library root URL.
     private func folderURL(for title: String) -> URL {
@@ -163,194 +156,6 @@ struct ContentView: View {
         if panel.runModal() == .OK { model.importSounds(panel.urls) }
     }
 
-    // MARK: - Sidebar (engine boxes + files)
-
-    private var sidebar: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("LIBRARY")
-                    .font(NordFont.font(10, weight: .bold))
-                    .foregroundStyle(NordColor.subtext)
-                Spacer()
-                Button {
-                    if let highlighted = model.highlighted { model.assignToChannel(highlighted) }
-                } label: {
-                    Image(systemName: "arrow.right").font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.highlighted == nil ? NordColor.subtext.opacity(0.4) : NordColor.red)
-                .disabled(model.highlighted == nil)
-                .help("Assign the highlighted sound to the selected mixer channel (or a new channel)")
-                if sidebarTab == .files {
-                    Button { addFolder() } label: {
-                        Image(systemName: "plus").font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(NordColor.red)
-                    .help("Add a folder of .npno pianos and .nsmp3/.nsmp4 samples to the library")
-                } else {
-                    Button { importFiles() } label: {
-                        Image(systemName: "square.and.arrow.down").font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(NordColor.red)
-                    .help("Import .npno / .nsmp3 / .nsmp4 files into the categorized library")
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            tabBar
-            if sidebarTab == .piano { pianoSubBar }
-            sidebarContent
-        }
-        .frame(width: 240)
-    }
-
-    /// Engine tabs: the active one gets the red underline, Nord-panel-style.
-    private var tabBar: some View {
-        HStack(spacing: 0) {
-            ForEach(SidebarTab.allCases, id: \.self) { tab in
-                Button {
-                    sidebarTab = tab
-                } label: {
-                    VStack(spacing: 3) {
-                        Text(tab.rawValue)
-                            .font(NordFont.font(9, weight: .bold))
-                            .foregroundStyle(sidebarTab == tab ? NordColor.red : NordColor.subtext)
-                        Rectangle()
-                            .fill(sidebarTab == tab ? NordColor.red : Color.clear)
-                            .frame(height: 2)
-                    }
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.bottom, 4)
-    }
-
-    /// GRAND / UPRIGHT / EP sub-navigation inside the Piano engine.
-    private var pianoSubBar: some View {
-        HStack(spacing: 6) {
-            subButton("ALL", active: pianoFilter == nil) { pianoFilter = nil }
-            ForEach(PianoSubcategory.allCases, id: \.self) { sub in
-                subButton(sub.rawValue.uppercased(), active: pianoFilter == sub) { pianoFilter = sub }
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 6)
-    }
-
-    private func subButton(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(NordFont.font(8, weight: .semibold))
-                .foregroundStyle(active ? Color.black : NordColor.subtext)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(active ? NordColor.red : NordColor.card)
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
-    @ViewBuilder
-    private var sidebarContent: some View {
-        switch sidebarTab {
-        case .files:
-            filesList
-        case .piano:
-            catalogList(entries: model.catalog.entries(in: .piano, subcategory: pianoFilter?.rawValue),
-                        emptyLabel: pianoFilter == nil ? "pianos" : "\(pianoFilter!.rawValue)s")
-        case .organ:
-            catalogList(entries: model.catalog.entries(in: .organ), emptyLabel: "organs")
-        case .synth:
-            // "other" lands here too — unclassified samples are usually synth fodder.
-            catalogList(entries: model.catalog.entries(in: .synth) + model.catalog.entries(in: .other),
-                        emptyLabel: "synths")
-        }
-    }
-
-    /// Catalog rows for one engine box; click layers the sound, right-click fixes
-    /// a wrong auto-classification.
-    private func catalogList(entries: [CatalogEntry], emptyLabel: String) -> some View {
-        Group {
-            if entries.isEmpty {
-                VStack(spacing: 8) {
-                    Spacer()
-                    Text("No \(emptyLabel) yet")
-                        .font(.callout).foregroundStyle(NordColor.text)
-                    Button("Import…") { importFiles() }
-                        .buttonStyle(.bordered).tint(.gray)
-                    Text("or drop files anywhere to play them once")
-                        .font(.caption).foregroundStyle(NordColor.subtext)
-                        .multilineTextAlignment(.center)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            } else {
-                List(selection: .constant(Set<URL>())) {
-                    ForEach(entries) { entry in
-                        catalogRow(entry)
-                            .listRowBackground(rowBackground(for: model.pianoEntry(for: entry)))
-                    }
-                }
-                .listStyle(.sidebar)
-            }
-        }
-    }
-
-    private func catalogRow(_ entry: CatalogEntry) -> some View {
-        let pianoEntry = model.pianoEntry(for: entry)
-        return HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.name).font(.callout).foregroundStyle(NordColor.text)
-                Text("v\(entry.version)")
-                    .font(.caption2).foregroundStyle(NordColor.subtext)
-            }
-            Spacer()
-            if model.selected.contains(pianoEntry) && model.selected.count > 1,
-               let channel = model.channels.first(where: { $0.entry == pianoEntry }) {
-                Slider(value: Binding(
-                    get: { Double(model.gains[pianoEntry.url] ?? 1) },
-                    set: { model.setGain(Float($0), for: channel) }
-                ), in: 0...1.5)
-                .tint(NordColor.red)
-                .frame(width: 70)
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2) { model.select(pianoEntry) }
-        .onTapGesture { model.highlighted = pianoEntry }
-        .contextMenu {
-            Menu("Move to…") {
-                ForEach(SoundCategory.allCases, id: \.self) { cat in
-                    if cat != entry.category {
-                        Button(cat.rawValue.capitalized) { model.recategorize(entry, to: cat) }
-                    }
-                }
-            }
-            if entry.category == .piano {
-                Menu("Piano type…") {
-                    ForEach(PianoSubcategory.allCases, id: \.self) { sub in
-                        if sub.rawValue != entry.subcategory {
-                            Button(sub.rawValue.capitalized) {
-                                model.recategorize(entry, to: .piano, subcategory: sub.rawValue)
-                            }
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.path)])
-            }
-        }
-    }
-
-    /// FILES tab: the classic folder-scanned library, unchanged.
     private var filesList: some View {
         Group {
             if !model.sections.isEmpty {
@@ -401,11 +206,24 @@ struct ContentView: View {
     }
 
     private var main: some View {
-        HStack(spacing: 0) {
-            sidebar
-            Divider().overlay(NordColor.red.opacity(0.25))
-            VStack(spacing: 12) {
+        VStack(spacing: 12) {
             HStack(spacing: 16) {
+                filesToggle
+                Button { importFiles() } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .tint(.gray)
+                .help("Import .npno / .nsmp3 / .nsmp4 files into the categorized library")
+                Button {
+                    if let highlighted = model.highlighted { model.assignToChannel(highlighted) }
+                } label: {
+                    Image(systemName: "arrow.right")
+                }
+                .buttonStyle(.bordered)
+                .tint(NordColor.red)
+                .disabled(model.highlighted == nil)
+                .help("Assign the highlighted sound to the selected mixer channel (or a new channel)")
                 Spacer()
                 performToggle
                 keyboardToggle
@@ -424,20 +242,48 @@ struct ContentView: View {
             if model.isRecording || model.lastTake != nil { takeBar }
             if performMode {
                 performView
+            } else if showFiles {
+                filesList
+                    .frame(maxHeight: .infinity)
             } else {
-            fxStrip
-            MixerView()
-            if model.showKeyboard {
-                KeyboardView()
-                    .frame(height: 190)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(NordColor.red.opacity(0.35), lineWidth: 1))
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                enginesSection
+                fxStrip
+                MixerView()
+                if model.showKeyboard {
+                    KeyboardView()
+                        .frame(height: 190)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(NordColor.red.opacity(0.35), lineWidth: 1))
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
-            }
-            }
-            .padding(16)
         }
+        .padding(16)
+    }
+
+    /// Full-width top section: scenes column + the three engine panels.
+    private var enginesSection: some View {
+        HStack(spacing: 12) {
+            ScenesColumnView(onSave: saveScene, onRename: renameScene)
+            EnginePanelView(category: .piano, title: "PIANO", icon: "pianokeys",
+                            subcategories: PianoSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+            EnginePanelView(category: .organ, title: "ORGAN", icon: "slider.vertical.3",
+                            subcategories: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+            EnginePanelView(category: .synth, title: "SYNTH", icon: "waveform.path",
+                            subcategories: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+        }
+        .frame(minHeight: 320)
+        .frame(maxHeight: .infinity)
+        .layoutPriority(1)
+    }
+
+    /// FILES view toggle: the folder-scanned library instead of the engine panels.
+    private var filesToggle: some View {
+        Toggle(isOn: $showFiles) {
+            Image(systemName: "folder")
+        }
+        .toggleStyle(PillToggleStyle(onColor: NordColor.red))
+        .help(showFiles ? "Back to the engine panels" : "Browse the folder-scanned library")
     }
 
     /// Switch between the edit view (mixer/keyboard) and the perform page.
