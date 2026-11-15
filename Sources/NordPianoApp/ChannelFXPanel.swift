@@ -24,11 +24,30 @@ struct ChannelFXPanel: View {
                 .font(NordFont.font(13, weight: .bold))
                 .foregroundStyle(NordColor.text)
 
-            // Fixed ideal width + horizontal scroll: without this the popover
-            // compresses sections to fit the screen edge and texts wrap one
-            // letter per line ("F B T", vertical cut-off titles).
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .center, spacing: 16) {
+            // Fixed ideal size: without this the popover compresses sections
+            // to fit the screen edge and texts wrap one letter per line.
+            // Synth channels add MODE/MONO/LFO — too wide for one row, so they
+            // get two (FX row + synth row). Pianos/organs keep the single row.
+            if isSynth {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 16) { fxSections }
+                    HStack(alignment: .center, spacing: 16) { synthSections }
+                }
+                .fixedSize()
+            } else {
+                HStack(alignment: .center, spacing: 16) { fxSections }
+                    .fixedSize()
+            }
+        }
+        .padding(18)
+    }
+
+    private var isSynth: Bool {
+        model.catalogEntry(for: channel.entry.url)?.category == .synth
+    }
+
+    /// The classic chain every channel gets.
+    @ViewBuilder private var fxSections: some View {
                 section(label: "EQ") {
                     HStack(spacing: 12) {
                         panelKnob(value: Binding(
@@ -124,10 +143,10 @@ struct ChannelFXPanel: View {
                         ), caption: "SIZE") { _ in String(format: "%.1f", 0.3 + fx.reverbSize * 6.7) + "s" }
                     }
                 }
+    }
 
-                // Synth-section modifiers: only for channels whose sound came
-                // from the catalog's synth box (pianos/organs keep the classic chain).
-                if model.catalogEntry(for: channel.entry.url)?.category == .synth {
+    /// Synth-section modifiers (second row), only for synth channels.
+    @ViewBuilder private var synthSections: some View {
                     section(label: "MODE", isOn: Binding(
                         get: { fx.oneShot }, set: { v in update { $0.oneShot = v } }
                     )) {
@@ -150,6 +169,7 @@ struct ChannelFXPanel: View {
                     }
                     .effectDivider()
 
+
                     section(label: "LFO", isOn: Binding(
                         get: { fx.lfoDepth > 0 },
                         set: { on in update { $0.lfoDepth = on ? max(0.3, $0.lfoDepth) : 0 } }
@@ -163,12 +183,6 @@ struct ChannelFXPanel: View {
                             ), caption: "RATE") { n in String(format: "%.1f", 1 + n * 9) + "Hz" }
                         }
                     }
-                }
-                }
-                .fixedSize(horizontal: true, vertical: false)
-            }
-        }
-        .padding(18)
     }
 
     /// One section: title on top, knobs beside a bare vertical pill toggle
