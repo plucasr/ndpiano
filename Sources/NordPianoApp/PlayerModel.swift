@@ -255,6 +255,18 @@ final class PlayerModel: ObservableObject {
         activeSceneID = scene.id
     }
 
+    /// Index of the active scene in the list (nil if none recalled / setup changed).
+    var activeSceneIndex: Int? { scenes.firstIndex { $0.id == activeSceneID } }
+
+    /// Step through the scene list (header ◀ ▶). With no active scene, ▶ starts
+    /// at the first and ◀ at the last; wraps around.
+    func stepScene(_ delta: Int) {
+        guard !scenes.isEmpty else { return }
+        let current = activeSceneIndex ?? (delta > 0 ? -1 : 0)
+        let next = (current + delta + scenes.count) % scenes.count
+        applyScene(scenes[next])
+    }
+
     func deleteScene(_ scene: Scene) {
         scenes.removeAll { $0.id == scene.id }
     }

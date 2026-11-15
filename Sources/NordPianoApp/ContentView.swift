@@ -124,6 +124,8 @@ struct ContentView: View {
                     .foregroundStyle(NordColor.subtext)
             }
             Spacer()
+            sceneNavigator
+            Spacer()
             VStack(alignment: .trailing, spacing: 2) {
                 Text(model.pianoTitle).font(.headline).foregroundStyle(NordColor.text)
                 if !model.version.isEmpty {
@@ -135,6 +137,50 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(NordColor.card)
+    }
+
+    /// Header center: ◀ SCENE n · name ▶ + SAVE (update the active scene).
+    private var sceneNavigator: some View {
+        HStack(spacing: 10) {
+            Button { model.stepScene(-1) } label: {
+                Image(systemName: "chevron.left").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.scenes.isEmpty ? NordColor.subtext.opacity(0.4) : NordColor.red)
+            .disabled(model.scenes.isEmpty)
+
+            if let index = model.activeSceneIndex {
+                Text("SCENE \(index + 1) · \(model.scenes[index].name)")
+                    .font(NordFont.font(11, weight: .bold))
+                    .foregroundStyle(NordColor.red)
+                    .lineLimit(1)
+            } else {
+                Text(model.scenes.isEmpty ? "NO SCENES" : "NO SCENE ACTIVE")
+                    .font(NordFont.font(11, weight: .medium))
+                    .foregroundStyle(NordColor.subtext)
+            }
+
+            Button { model.stepScene(1) } label: {
+                Image(systemName: "chevron.right").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.scenes.isEmpty ? NordColor.subtext.opacity(0.4) : NordColor.red)
+            .disabled(model.scenes.isEmpty)
+
+            Button("SAVE") {
+                if let index = model.activeSceneIndex {
+                    model.updateScene(model.scenes[index])
+                } else {
+                    saveScene()
+                }
+            }
+            .font(NordFont.font(9, weight: .bold))
+            .buttonStyle(.bordered)
+            .tint(.gray)
+            .help(model.activeSceneIndex == nil
+                  ? "Save the current setup as a new scene"
+                  : "Overwrite the active scene with the current setup")
+        }
     }
 
     /// Shared by the sidebar `+` button and the empty-library state.
@@ -265,11 +311,11 @@ struct ContentView: View {
     private var enginesSection: some View {
         HStack(spacing: 12) {
             ScenesColumnView(onSave: saveScene, onRename: renameScene)
-            EnginePanelView(category: .piano, title: "PIANO", icon: "pianokeys",
+            EnginePanelView(category: .piano, title: "PIANO", icon: .piano,
                             subcategories: PianoSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
-            EnginePanelView(category: .organ, title: "ORGAN", icon: "slider.vertical.3",
+            EnginePanelView(category: .organ, title: "ORGAN", icon: .organ,
                             subcategories: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
-            EnginePanelView(category: .synth, title: "SYNTH", icon: "waveform.path",
+            EnginePanelView(category: .synth, title: "SYNTH", icon: .synth,
                             subcategories: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
         }
         .frame(minHeight: 320)

@@ -9,9 +9,9 @@ struct EnginePanelView: View {
     @EnvironmentObject private var model: PlayerModel
 
     let category: SoundCategory
-    /// Display title ("PIANO"), SF Symbol for the display area, subcategory pills.
+    /// Display title ("PIANO"), line icon for the display area, subcategory pills.
     let title: String
-    let icon: String
+    let icon: EngineIcon.Kind
     let subcategories: [(label: String, raw: String)]
 
     @State private var filter: String? // nil = ALL
@@ -95,11 +95,8 @@ struct EnginePanelView: View {
     }
 
     private var displayArea: some View {
-        Image(systemName: icon)
-            .font(.system(size: 44, weight: .thin))
-            .foregroundStyle(NordColor.subtext.opacity(0.8))
-            .frame(maxWidth: .infinity, minHeight: 90)
-            .background(NordColor.background)
+        EngineIcon(kind: icon)
+            .frame(minHeight: 90)
             .padding(.horizontal, 10)
             .padding(.top, 6)
     }
