@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject private var model: PlayerModel
     @State private var isDropTarget = false
+    /// Perform page: large scene tiles replace the mixer/keyboard for live use.
+    @State private var performMode = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +64,37 @@ struct ContentView: View {
                 model.toggleFavorite(entry)
             }
         }
+    }
+
+    /// Name prompt for saving a scene (modal field, same approach as NSOpenPanel).
+    private func promptForName(title: String, initial: String = "") -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        let field = NSTextField(string: initial)
+        field.placeholderString = "Scene name"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
+
+    private func saveScene() {
+        guard !model.selected.isEmpty else {
+            model.status = "Select at least one sound before saving a scene"
+            return
+        }
+        if let name = promptForName(title: "Save current setup as a scene") {
+            model.saveScene(name: name)
+        }
+    }
+
+    private func renameScene(_ scene: PlayerModel.Scene) {
+        guard let name = promptForName(title: "Rename scene", initial: scene.name) else { return }
+        model.renameScene(scene, to: name)
     }
 
     private var header: some View {
@@ -169,6 +202,7 @@ struct ContentView: View {
             VStack(spacing: 12) {
             HStack(spacing: 16) {
                 Spacer()
+                performToggle
                 keyboardToggle
                 devicesMenu
                 recordButton
@@ -183,6 +217,9 @@ struct ContentView: View {
                 .help("Play a .npno / .nsmp3 / .nsmp4 file once, without adding it to the library")
             }
             if model.isRecording || model.lastTake != nil { takeBar }
+            if performMode {
+                performView
+            } else {
             fxStrip
             MixerView()
             if model.showKeyboard {
@@ -193,8 +230,88 @@ struct ContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             }
+            }
             .padding(16)
         }
+    }
+
+    /// Switch between the edit view (mixer/keyboard) and the perform page.
+    private var performToggle: some View {
+        Toggle(isOn: $performMode) {
+            Image(systemName: "music.note.list")
+        }
+        .toggleStyle(PillToggleStyle(onColor: NordColor.red))
+        .help(performMode ? "Back to the mixer" : "Perform page — big scene buttons for live use")
+    }
+
+    /// Perform page: a grid of large scene tiles, numbered setlist-style, plus a
+    /// save tile for capturing the current setup. The recalled scene stays lit.
+    private var performView: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 14)], spacing: 14) {
+                ForEach(Array(model.scenes.enumerated()), id: \.element.id) { index, scene in
+                    sceneTile(scene, number: index + 1)
+                }
+                saveTile
+            }
+            .padding(4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func sceneTile(_ scene: PlayerModel.Scene, number: Int) -> some View {
+        let isActive = model.activeSceneID == scene.id
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(String(format: "%02d", number))
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .foregroundStyle(isActive ? NordColor.red : NordColor.subtext)
+                Spacer()
+                if isActive {
+                    Circle().fill(NordColor.red).frame(width: 8, height: 8)
+                }
+            }
+            Spacer()
+            Text(scene.name)
+                .font(NordFont.font(17, weight: .bold))
+                .foregroundStyle(NordColor.text)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Text("\(scene.sounds.count) sound\(scene.sounds.count == 1 ? "" : "s")")
+                .font(NordFont.font(10, weight: .medium))
+                .foregroundStyle(NordColor.subtext)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+        .background(isActive ? NordColor.red.opacity(0.14) : NordColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .stroke(isActive ? NordColor.red : NordColor.red.opacity(0.25), lineWidth: isActive ? 2 : 1))
+        .contentShape(Rectangle())
+        .onTapGesture { model.applyScene(scene) }
+        .contextMenu {
+            Button("Update with Current State") { model.updateScene(scene) }
+            Button("Rename…") { renameScene(scene) }
+            Button("Delete") { model.deleteScene(scene) }
+        }
+    }
+
+    /// Dashed tile at the end of the grid: capture the current setup as a scene.
+    private var saveTile: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "plus")
+                .font(NordFont.font(22, weight: .semibold))
+            Text("Save current setup")
+                .font(NordFont.font(11, weight: .medium))
+        }
+        .foregroundStyle(NordColor.subtext)
+        .frame(maxWidth: .infinity, minHeight: 120)
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .stroke(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+            .foregroundStyle(NordColor.red.opacity(0.4)))
+        .contentShape(Rectangle())
+        .onTapGesture { saveScene() }
+        .help("Save the current setup (sounds, mixer, FX) as a scene")
     }
 
     /// Show/hide the on-screen keyboard (hidden = view removed, nothing renders).

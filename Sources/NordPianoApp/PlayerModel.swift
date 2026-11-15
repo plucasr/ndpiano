@@ -57,6 +57,132 @@ final class PlayerModel: ObservableObject {
     /// Keys pressed on screen (so the keyboard shows UI touches even before voices sound).
     @Published var uiHeld: Set<Int> = []
 
+    // MARK: - Scenes
+
+    /// A saved setup: which sounds are layered, their mixer state and the master
+    /// FX — recallable with one click (setlist-style).
+    struct Scene: Identifiable, Codable {
+        struct MasterFX: Codable, Hashable {
+            var filterOn = false
+            var filterNorm = 1.0
+            var compOn = false
+            var compAmount = 0.3
+            var delayOn = false
+            var delayTime = 0.25
+            var delayFeedback = 0.3
+            var delayMix = 0.2
+            var reverbOn = false
+            var reverbMix = 0.2
+            var reverbSize = 0.4
+            var boostDb = 0.0
+        }
+        var id = UUID()
+        var name: String
+        /// Layer file paths, in the order they were selected.
+        var sounds: [String]
+        var gains: [String: Float] = [:]
+        var muted: [String] = []
+        var layerFX: [String: PianoPlayer.LayerFX] = [:]
+        var fx = MasterFX()
+    }
+
+    @Published var scenes: [Scene] = [] {
+        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(scenes), forKey: "scenes") }
+    }
+    /// The most recently recalled scene (highlighted on the perform page).
+    @Published var activeSceneID: UUID?
+
+    /// Snapshot of the current selection, mixer and master FX.
+    private func captureScene(name: String) -> Scene {
+        var fx = Scene.MasterFX()
+        fx.filterOn = filterOn; fx.filterNorm = filterNorm
+        fx.compOn = compOn; fx.compAmount = compAmount
+        fx.delayOn = delayOn; fx.delayTime = delayTime
+        fx.delayFeedback = delayFeedback; fx.delayMix = delayMix
+        fx.reverbOn = reverbOn; fx.reverbMix = reverbMix; fx.reverbSize = reverbSize
+        fx.boostDb = boostDb
+        let urls = selected.map(\.url)
+        return Scene(
+            name: name,
+            sounds: urls.map(\.path),
+            gains: Dictionary(uniqueKeysWithValues: urls.compactMap { u in gains[u].map { (u.path, $0) } }),
+            muted: muted.map(\.path),
+            layerFX: Dictionary(uniqueKeysWithValues: urls.compactMap { u in layerFX[u].map { (u.path, $0) } }),
+            fx: fx)
+    }
+
+    /// Snapshot the current setup as a new named scene.
+    func saveScene(name: String) {
+        let scene = captureScene(name: name)
+        scenes.append(scene)
+        status = "Scene “\(name)” saved — \(scene.sounds.count) sound\(scene.sounds.count == 1 ? "" : "s")"
+    }
+
+    /// Overwrite a scene's contents with the current setup, keeping its name,
+    /// id and position in the list.
+    func updateScene(_ scene: Scene) {
+        guard let i = scenes.firstIndex(where: { $0.id == scene.id }) else { return }
+        var updated = captureScene(name: scene.name)
+        updated.id = scene.id
+        scenes[i] = updated
+        status = "Scene “\(scene.name)” updated"
+    }
+
+    func renameScene(_ scene: Scene, to name: String) {
+        guard let i = scenes.firstIndex(where: { $0.id == scene.id }) else { return }
+        scenes[i].name = name
+    }
+
+    /// Recall a scene: restore its layers, mixer state and master FX. Sound files
+    /// that no longer exist are skipped (and reported) rather than failing.
+    func applyScene(_ scene: Scene) {
+        var entries: [PianoEntry] = []
+        var missing = 0
+        for path in scene.sounds {
+            if let entry = library.first(where: { $0.url.path == path }) {
+                entries.append(entry)
+            } else if FileManager.default.fileExists(atPath: path) {
+                let url = URL(fileURLWithPath: path)
+                entries.append(PianoEntry(url: url, name: url.deletingPathExtension().lastPathComponent,
+                                          version: "", folder: ""))
+            } else {
+                missing += 1
+            }
+        }
+        selected = Set(entries)
+        for (path, gain) in scene.gains { gains[URL(fileURLWithPath: path)] = gain }
+        muted = Set(scene.muted.map { URL(fileURLWithPath: $0) })
+        for (path, fx) in scene.layerFX { layerFX[URL(fileURLWithPath: path)] = fx }
+        let fx = scene.fx
+        filterOn = fx.filterOn; filterNorm = fx.filterNorm
+        compOn = fx.compOn; compAmount = fx.compAmount
+        delayOn = fx.delayOn; delayTime = fx.delayTime
+        delayFeedback = fx.delayFeedback; delayMix = fx.delayMix
+        reverbOn = fx.reverbOn; reverbMix = fx.reverbMix; reverbSize = fx.reverbSize
+        boostDb = fx.boostDb
+        syncLayers()
+        // syncLayers only pushes gain/mute/FX to newly added layers — refresh all.
+        if let player {
+            for entry in entries {
+                player.setLayerGain(gains[entry.url] ?? 1, id: entry.url)
+                player.setLayerMuted(muted.contains(entry.url), id: entry.url)
+                player.setLayerFX(layerFX[entry.url] ?? PianoPlayer.LayerFX(), id: entry.url)
+            }
+        }
+        status = missing == 0
+            ? "Scene “\(scene.name)” — \(entries.count) sound\(entries.count == 1 ? "" : "s")"
+            : "Scene “\(scene.name)” loaded — \(missing) sound\(missing == 1 ? "" : "s") missing"
+        activeSceneID = scene.id
+    }
+
+    func deleteScene(_ scene: Scene) {
+        scenes.removeAll { $0.id == scene.id }
+    }
+
+    func moveScenes(from offsets: IndexSet, to destination: Int) {
+        scenes.move(fromOffsets: offsets, toOffset: destination)
+    }
+
     // MARK: - Devices
 
     @Published var audioDevices: [PianoPlayer.AudioDevice] = []
@@ -100,6 +226,10 @@ final class PlayerModel: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: "layerFX"),
            let saved = try? JSONDecoder().decode([String: PianoPlayer.LayerFX].self, from: data) {
             layerFX = Dictionary(uniqueKeysWithValues: saved.map { (URL(fileURLWithPath: $0.key), $0.value) })
+        }
+        if let data = UserDefaults.standard.data(forKey: "scenes"),
+           let saved = try? JSONDecoder().decode([Scene].self, from: data) {
+            scenes = saved
         }
         rescan()
     }
@@ -230,6 +360,7 @@ final class PlayerModel: ObservableObject {
 
     func select(_ entry: PianoEntry) {
         if selected.contains(entry) { selected.remove(entry) } else { selected.insert(entry) }
+        activeSceneID = nil // hand-picked layers no longer match any recalled scene
         syncLayers()
     }
 
