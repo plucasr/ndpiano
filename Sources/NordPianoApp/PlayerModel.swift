@@ -25,7 +25,22 @@ final class PlayerModel: ObservableObject {
     @Published var status = "Drop a .npno or .nsmp4 file anywhere, or Open…"
     @Published var roots: [URL] = []
     @Published var library: [PianoEntry] = []
-    @Published var selected: Set<PianoEntry> = []
+
+    /// One mixer channel: a stable slot ID (the engine's layer ID) holding a
+    /// sound. Ordered — mixer strips and scenes follow this order.
+    struct ChannelState: Identifiable, Hashable {
+        let id: UUID
+        var entry: PianoEntry
+    }
+    /// The layered channels, in order. Replaces the old `selected` set.
+    @Published var channels: [ChannelState] = []
+    /// The channel the "→" assign button targets (tap a mixer strip to pick it).
+    @Published var selectedChannelID: UUID?
+    /// Sidebar highlight: the sound the "→" button would assign.
+    @Published var highlighted: PianoEntry?
+
+    /// Sounds currently loaded, as a set (row highlighting, gains slider).
+    var selected: Set<PianoEntry> { Set(channels.map(\.entry)) }
     @Published var gains: [URL: Float] = [:]
     /// Muted layers (mixer mute buttons).
     @Published var muted: Set<URL> = []
@@ -133,7 +148,7 @@ final class PlayerModel: ObservableObject {
         fx.delayFeedback = delayFeedback; fx.delayMix = delayMix
         fx.reverbOn = reverbOn; fx.reverbMix = reverbMix; fx.reverbSize = reverbSize
         fx.boostDb = boostDb
-        let urls = selected.map(\.url)
+        let urls = channels.map(\.entry.url) // channel order, not set order
         return Scene(
             name: name,
             sounds: urls.map(\.path),
@@ -181,7 +196,8 @@ final class PlayerModel: ObservableObject {
                 missing += 1
             }
         }
-        selected = Set(entries)
+        channels = entries.map { ChannelState(id: UUID(), entry: $0) }
+        selectedChannelID = channels.first?.id
         for (path, gain) in scene.gains { gains[URL(fileURLWithPath: path)] = gain }
         muted = Set(scene.muted.map { URL(fileURLWithPath: $0) })
         for (path, fx) in scene.layerFX { layerFX[URL(fileURLWithPath: path)] = fx }
@@ -195,10 +211,10 @@ final class PlayerModel: ObservableObject {
         syncLayers()
         // syncLayers only pushes gain/mute/FX to newly added layers — refresh all.
         if let player {
-            for entry in entries {
-                player.setLayerGain(gains[entry.url] ?? 1, id: entry.url)
-                player.setLayerMuted(muted.contains(entry.url), id: entry.url)
-                player.setLayerFX(layerFX[entry.url] ?? PianoPlayer.LayerFX(), id: entry.url)
+            for channel in channels {
+                player.setLayerGain(gains[channel.entry.url] ?? 1, id: channel.id)
+                player.setLayerMuted(muted.contains(channel.entry.url), id: channel.id)
+                player.setLayerFX(layerFX[channel.entry.url] ?? PianoPlayer.LayerFX(), id: channel.id)
             }
         }
         status = missing == 0
@@ -271,10 +287,12 @@ final class PlayerModel: ObservableObject {
         UserDefaults.standard.set(try? JSONEncoder().encode(dict), forKey: "layerFX")
     }
 
-    /// Mixer strip change: EQ, filter, compressor or reverb of one layer.
-    func setLayerFX(_ fx: PianoPlayer.LayerFX, for url: URL) {
-        layerFX[url] = fx
-        player?.setLayerFX(fx, id: url)
+    /// Mixer strip change: EQ, filter, compressor or reverb of one channel.
+    /// The FX is remembered per sound (path-keyed) so it follows the sound
+    /// into any channel or scene.
+    func setLayerFX(_ fx: PianoPlayer.LayerFX, for channel: ChannelState) {
+        layerFX[channel.entry.url] = fx
+        player?.setLayerFX(fx, id: channel.id)
     }
 
     /// Read just enough of a file for its identity — pianos are tens of MB.
@@ -364,9 +382,11 @@ final class PlayerModel: ObservableObject {
         }
         entries.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         library = entries
-        // Drop selections/favorites that vanished.
-        selected = selected.filter { sel in entries.contains(sel) || FileManager.default.fileExists(atPath: sel.url.path) }
-        if selected.isEmpty, let first = entries.first { selected = [first] }
+        // Drop channels whose sound vanished.
+        channels = channels.filter { ch in
+            entries.contains(ch.entry) || FileManager.default.fileExists(atPath: ch.entry.url.path)
+        }
+        if channels.isEmpty, let first = entries.first { channels = [ChannelState(id: UUID(), entry: first)] }
         status = roots.isEmpty
             ? "Add a folder (+ in the library sidebar), or drop a .npno / .nsmp4"
             : "\(entries.count) sounds in \(roots.count) folder\(roots.count == 1 ? "" : "s") — click to play, click again to layer"
@@ -388,23 +408,53 @@ final class PlayerModel: ObservableObject {
             forKey: "favoritePianos")
     }
 
-    // MARK: - Selection / layering
+    // MARK: - Selection / channels
 
+    /// Toggle a sound in the mix: if a channel already holds it, remove that
+    /// channel; otherwise append a new channel at the end.
     func select(_ entry: PianoEntry) {
-        if selected.contains(entry) { selected.remove(entry) } else { selected.insert(entry) }
+        if let i = channels.firstIndex(where: { $0.entry == entry }) {
+            removeChannel(channels[i])
+        } else {
+            channels.append(ChannelState(id: UUID(), entry: entry))
+            syncLayers()
+        }
         activeSceneID = nil // hand-picked layers no longer match any recalled scene
+    }
+
+    /// Assign a sound to the selected channel (replacing its current sound), or
+    /// append it as a new channel when nothing is selected.
+    func assignToChannel(_ entry: PianoEntry) {
+        if let id = selectedChannelID, let i = channels.firstIndex(where: { $0.id == id }) {
+            if channels[i].entry == entry { return }
+            channels[i].entry = entry
+            // Same slot, new sound: the engine layer must be rebuilt.
+            player?.removeLayer(id: id)
+        } else {
+            let channel = ChannelState(id: UUID(), entry: entry)
+            channels.append(channel)
+            selectedChannelID = channel.id
+        }
+        activeSceneID = nil
         syncLayers()
     }
 
-    func setGain(_ gain: Float, for entry: PianoEntry) {
-        gains[entry.url] = gain
-        player?.setLayerGain(gain, id: entry.url)
+    func removeChannel(_ channel: ChannelState) {
+        channels.removeAll { $0.id == channel.id }
+        if selectedChannelID == channel.id { selectedChannelID = channels.first?.id }
+        syncLayers()
     }
 
-    func toggleMute(_ entry: PianoEntry) {
-        let isMuted = !muted.contains(entry.url)
-        if isMuted { muted.insert(entry.url) } else { muted.remove(entry.url) }
-        player?.setLayerMuted(isMuted, id: entry.url)
+    func setGain(_ gain: Float, for channel: ChannelState) {
+        gains[channel.entry.url] = gain
+        player?.setLayerGain(gain, id: channel.id)
+    }
+
+    func toggleMute(_ channel: ChannelState) {
+        let url = channel.entry.url
+        let isMuted = !muted.contains(url)
+        if isMuted { muted.insert(url) } else { muted.remove(url) }
+        player?.setLayerMuted(isMuted, id: channel.id)
     }
 
     private func syncLayers() {
@@ -420,15 +470,15 @@ final class PlayerModel: ObservableObject {
                 applyFX()
             }
             guard let player else { return }
-            let wanted = Set(selected.map(\.url))
+            let wanted = Dictionary(uniqueKeysWithValues: channels.map { ($0.id, $0.entry) })
             let have = Set(player.layerIDs)
-            for url in wanted.subtracting(have) {
-                let data = try Data(contentsOf: url)
-                try addToPlayer(player, bytes: [UInt8](data), url: url, gain: gains[url] ?? 1)
-                player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: url)
-                if muted.contains(url) { player.setLayerMuted(true, id: url) }
+            for (id, entry) in wanted where !have.contains(id) {
+                let data = try Data(contentsOf: entry.url)
+                try addToPlayer(player, bytes: [UInt8](data), url: entry.url, id: id, gain: gains[entry.url] ?? 1)
+                player.setLayerFX(layerFX[entry.url] ?? PianoPlayer.LayerFX(), id: id)
+                if muted.contains(entry.url) { player.setLayerMuted(true, id: id) }
             }
-            for url in have.subtracting(wanted) { player.removeLayer(id: url) }
+            for id in have.subtracting(wanted.keys) { player.removeLayer(id: id) }
             updateHeader()
         } catch {
             status = "Error: \(error)"
@@ -437,11 +487,12 @@ final class PlayerModel: ObservableObject {
     }
 
     /// Add a file to the player, picking the decoder by extension (piano vs sample).
-    private func addToPlayer(_ player: PianoPlayer, bytes: [UInt8], url: URL, gain: Float) throws {
+    /// The layer id is the channel slot; the url only picks the decoder.
+    private func addToPlayer(_ player: PianoPlayer, bytes: [UInt8], url: URL, id: UUID, gain: Float) throws {
         if url.pathExtension.lowercased() == "npno" {
-            try player.addLayer(bytes: bytes, id: url, gain: gain)
+            try player.addLayer(bytes: bytes, id: id, gain: gain)
         } else {
-            try player.addSampleLayer(bytes: bytes, id: url, gain: gain)
+            try player.addSampleLayer(bytes: bytes, id: id, gain: gain)
         }
     }
 
@@ -451,16 +502,16 @@ final class PlayerModel: ObservableObject {
 
     private func updateHeader() {
         refreshMarkers()
-        guard let first = selected.sorted(by: { $0.name < $1.name }).first,
-              let info = fullIdentity(of: first.url) else {
+        guard let first = channels.sorted(by: { $0.entry.name < $1.entry.name }).first,
+              let info = fullIdentity(of: first.entry.url) else {
             pianoTitle = "No piano loaded"
             version = ""
             return
         }
         pianoTitle = info.name
         version = info.version
-        status = selected.count > 1
-            ? "Layering \(selected.count) sounds — \(info.zones) zones in \(first.name)"
+        status = channels.count > 1
+            ? "Layering \(channels.count) sounds — \(info.zones) zones in \(first.entry.name)"
             : "Playing — \(info.zones) zones. MIDI in, built-in audio out."
     }
 
@@ -474,10 +525,10 @@ final class PlayerModel: ObservableObject {
         player?.setReverb(mix: reverbOn ? reverbMix : 0, decaySeconds: 0.3 + reverbSize * 6.7)
     }
 
-    /// Replace all layers with a single piano (drop / Open…).
+    /// Replace all channels with a single sound (drop / Open…).
     func load(url: URL) {
         if let entry = library.first(where: { $0.url == url }) {
-            selected = [entry]
+            channels = [ChannelState(id: UUID(), entry: entry)]
             syncLayers()
             return
         }
@@ -490,15 +541,16 @@ final class PlayerModel: ObservableObject {
         }
         guard let player else { return }
         for id in player.layerIDs { player.removeLayer(id: id) }
+        let id = UUID()
         do {
             let data = try Data(contentsOf: url)
-            try addToPlayer(player, bytes: [UInt8](data), url: url, gain: 1)
-            player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: url)
+            try addToPlayer(player, bytes: [UInt8](data), url: url, id: id, gain: 1)
+            player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: id)
         } catch {
             status = "Error: \(error)"
             return
         }
-        selected = []
+        channels = [ChannelState(id: id, entry: PianoEntry(url: url, name: info.name, version: info.version, folder: ""))]
         pianoTitle = info.name
         version = info.version
         refreshMarkers()

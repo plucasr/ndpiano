@@ -47,6 +47,13 @@ struct ContentView: View {
         return model.roots.first { $0.lastPathComponent == first } ?? URL(fileURLWithPath: "")
     }
 
+    /// Loaded = red tint; highlighted (assign candidate) = fainter tint.
+    private func rowBackground(for entry: PlayerModel.PianoEntry) -> Color {
+        if model.selected.contains(entry) { return NordColor.red.opacity(0.18) }
+        if model.highlighted == entry { return NordColor.red.opacity(0.07) }
+        return NordColor.card
+    }
+
     private func sidebarRow(_ entry: PlayerModel.PianoEntry) -> some View {
         let isSel = model.selected.contains(entry)
         return HStack {
@@ -59,17 +66,19 @@ struct ContentView: View {
             if model.isFavorite(entry) {
                 Image(systemName: "star.fill").font(.caption).foregroundStyle(NordColor.red)
             }
-            if isSel && model.selected.count > 1 {
+            if isSel && model.selected.count > 1,
+               let channel = model.channels.first(where: { $0.entry == entry }) {
                 Slider(value: Binding(
                     get: { Double(model.gains[entry.url] ?? 1) },
-                    set: { model.setGain(Float($0), for: entry) }
+                    set: { model.setGain(Float($0), for: channel) }
                 ), in: 0...1.5)
                 .tint(NordColor.red)
                 .frame(width: 70)
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { model.select(entry) }
+        .onTapGesture(count: 2) { model.select(entry) }
+        .onTapGesture { model.highlighted = entry }
         .contextMenu {
             Button(model.isFavorite(entry) ? "Remove from Shortcuts" : "Send to Shortcuts") {
                 model.toggleFavorite(entry)
@@ -163,6 +172,15 @@ struct ContentView: View {
                     .font(NordFont.font(10, weight: .bold))
                     .foregroundStyle(NordColor.subtext)
                 Spacer()
+                Button {
+                    if let highlighted = model.highlighted { model.assignToChannel(highlighted) }
+                } label: {
+                    Image(systemName: "arrow.right").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.highlighted == nil ? NordColor.subtext.opacity(0.4) : NordColor.red)
+                .disabled(model.highlighted == nil)
+                .help("Assign the highlighted sound to the selected mixer channel (or a new channel)")
                 if sidebarTab == .files {
                     Button { addFolder() } label: {
                         Image(systemName: "plus").font(.caption)
@@ -276,8 +294,7 @@ struct ContentView: View {
                 List(selection: .constant(Set<URL>())) {
                     ForEach(entries) { entry in
                         catalogRow(entry)
-                            .listRowBackground(model.selected.contains(model.pianoEntry(for: entry))
-                                               ? NordColor.red.opacity(0.18) : NordColor.card)
+                            .listRowBackground(rowBackground(for: model.pianoEntry(for: entry)))
                     }
                 }
                 .listStyle(.sidebar)
@@ -294,17 +311,19 @@ struct ContentView: View {
                     .font(.caption2).foregroundStyle(NordColor.subtext)
             }
             Spacer()
-            if model.selected.contains(pianoEntry) && model.selected.count > 1 {
+            if model.selected.contains(pianoEntry) && model.selected.count > 1,
+               let channel = model.channels.first(where: { $0.entry == pianoEntry }) {
                 Slider(value: Binding(
                     get: { Double(model.gains[pianoEntry.url] ?? 1) },
-                    set: { model.setGain(Float($0), for: pianoEntry) }
+                    set: { model.setGain(Float($0), for: channel) }
                 ), in: 0...1.5)
                 .tint(NordColor.red)
                 .frame(width: 70)
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture { model.select(pianoEntry) }
+        .onTapGesture(count: 2) { model.select(pianoEntry) }
+        .onTapGesture { model.highlighted = pianoEntry }
         .contextMenu {
             Menu("Move to…") {
                 ForEach(SoundCategory.allCases, id: \.self) { cat in
@@ -358,8 +377,7 @@ struct ContentView: View {
                         }) {
                             ForEach(section.entries) { entry in
                                 sidebarRow(entry)
-                                    .listRowBackground(model.selected.contains(entry)
-                                                       ? NordColor.red.opacity(0.18) : NordColor.card)
+                                    .listRowBackground(rowBackground(for: entry))
                             }
                         }
                     }

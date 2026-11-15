@@ -39,18 +39,18 @@ final class NsmpPlaybackTests: XCTestCase {
 
     func testEngineSampleLayer() throws {
         let bytes = try loadFixture()
-        let url = URL(fileURLWithPath: "/tmp/soft-wave-lead.nsmp4")
+        let id = UUID()
         let player = PianoPlayer()
-        try player.addSampleLayer(bytes: bytes, id: url)
-        XCTAssertEqual(player.layerIDs, [url])
+        try player.addSampleLayer(bytes: bytes, id: id)
+        XCTAssertEqual(player.layerIDs, [id])
         // Markers are the zone root keys, absolute (no piano +4 offset).
         XCTAssertEqual(player.markers.sorted(), [30, 36, 40, 44, 48, 52, 56, 60, 64, 68, 72,
                                                  76, 80, 84, 88, 92, 96, 100, 104, 108])
-        player.removeLayer(id: url)
+        player.removeLayer(id: id)
         XCTAssertTrue(player.layerIDs.isEmpty)
         // Pianos still load through the same player.
         var piano = [UInt8](repeating: 0, count: 0x100)
         piano[0] = 0x43; piano[1] = 0x42; piano[2] = 0x49; piano[3] = 0x4e
-        XCTAssertThrowsError(try player.addLayer(bytes: piano, id: URL(fileURLWithPath: "/tmp/x.npno")))
+        XCTAssertThrowsError(try player.addLayer(bytes: piano, id: UUID()))
     }
 }

@@ -1,21 +1,18 @@
 import SwiftUI
 import NordPianoEngine
 
-/// One mixer channel strip per selected piano: volume fader, mute, and an FX
-/// button opening the full per-channel effects editor (ChannelFXPanel).
+/// One mixer channel strip per channel, in channel order: volume fader, mute,
+/// and an FX button opening the full per-channel effects editor (ChannelFXPanel).
+/// Tapping a strip selects it as the target of the sidebar's "→" assign button.
 struct MixerView: View {
     @EnvironmentObject private var model: PlayerModel
 
-    private var selected: [PlayerModel.PianoEntry] {
-        model.selected.sorted { $0.name < $1.name }
-    }
-
     var body: some View {
-        if selected.isEmpty { EmptyView() } else {
+        if model.channels.isEmpty { EmptyView() } else {
             ScrollView(.horizontal, showsIndicators: true) {
                 HStack(alignment: .top, spacing: 10) {
-                    ForEach(selected) { entry in
-                        ChannelStrip(entry: entry)
+                    ForEach(model.channels) { channel in
+                        ChannelStrip(channel: channel)
                     }
                 }
                 .padding(.horizontal, 4)
@@ -30,10 +27,12 @@ struct MixerView: View {
 
 private struct ChannelStrip: View {
     @EnvironmentObject private var model: PlayerModel
-    let entry: PlayerModel.PianoEntry
+    let channel: PlayerModel.ChannelState
     @State private var showFX = false
 
+    private var entry: PlayerModel.PianoEntry { channel.entry }
     private var isMuted: Bool { model.muted.contains(entry.url) }
+    private var isSelected: Bool { model.selectedChannelID == channel.id }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -43,7 +42,7 @@ private struct ChannelStrip: View {
                     .foregroundStyle(NordColor.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Button { model.select(entry) } label: {
+                Button { model.removeChannel(channel) } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(NordFont.font(10))
                         .foregroundStyle(NordColor.subtext)
@@ -58,12 +57,12 @@ private struct ChannelStrip: View {
                 VStack(spacing: 3) {
                     Fader(value: Binding(
                         get: { Double(model.gains[entry.url] ?? 1) },
-                        set: { v in model.setGain(Float(v), for: entry) }
+                        set: { v in model.setGain(Float(v), for: channel) }
                     ), range: 0...1.5)
                     Text("VOL")
                         .font(NordFont.font(7, weight: .medium))
                         .foregroundStyle(NordColor.subtext)
-                    Button { model.toggleMute(entry) } label: {
+                    Button { model.toggleMute(channel) } label: {
                         Text("M")
                             .font(NordFont.font(8, weight: .bold))
                             .frame(width: 20, height: 13)
@@ -87,7 +86,7 @@ private struct ChannelStrip: View {
                 .buttonStyle(.plain)
                 .help("Edit channel effects")
                 .popover(isPresented: $showFX, arrowEdge: .bottom) {
-                    ChannelFXPanel(entry: entry)
+                    ChannelFXPanel(channel: channel)
                         .environmentObject(model)
                 }
                 .frame(maxHeight: .infinity)
@@ -98,8 +97,11 @@ private struct ChannelStrip: View {
         .frame(width: 110)
         .background(NordColor.background)
         .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(NordColor.red.opacity(0.25), lineWidth: 1))
+        .overlay(RoundedRectangle(cornerRadius: 6)
+            .stroke(NordColor.red.opacity(isSelected ? 0.9 : 0.25), lineWidth: isSelected ? 2 : 1))
         .opacity(isMuted ? 0.45 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectedChannelID = channel.id }
         .animation(.easeInOut(duration: 0.15), value: isMuted)
     }
 }

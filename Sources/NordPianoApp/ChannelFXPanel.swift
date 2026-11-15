@@ -6,21 +6,21 @@ import NordPianoEngine
 /// Mirrors the global FX strip's language (knobs + vertical pill toggles).
 struct ChannelFXPanel: View {
     @EnvironmentObject private var model: PlayerModel
-    let entry: PlayerModel.PianoEntry
+    let channel: PlayerModel.ChannelState
 
     private var fx: PianoPlayer.LayerFX {
-        model.layerFX[entry.url] ?? PianoPlayer.LayerFX()
+        model.layerFX[channel.entry.url] ?? PianoPlayer.LayerFX()
     }
 
     private func update(_ mutate: (inout PianoPlayer.LayerFX) -> Void) {
         var f = fx
         mutate(&f)
-        model.setLayerFX(f, for: entry.url)
+        model.setLayerFX(f, for: channel)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(entry.name)
+            Text(channel.entry.name)
                 .font(NordFont.font(13, weight: .bold))
                 .foregroundStyle(NordColor.text)
 

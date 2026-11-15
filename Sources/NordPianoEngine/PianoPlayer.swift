@@ -42,7 +42,7 @@ enum LayerSource {
 }
 
 struct Layer {
-    let id: URL
+    let id: UUID
     var gain: Float
     var muted = false
     var cache: [Int: CachedStroke] = [:]
@@ -56,7 +56,7 @@ struct Layer {
 /// One channel strip of the mixer: a layer's voices plus its own FX unit chain
 /// (source → low shelf → mid parametric → high shelf → low-pass → compressor → drive → delay → reverb → master).
 private final class Channel {
-    let id: URL
+    let id: UUID
     var voices: [Voice] = []
     var fx: PianoPlayer.LayerFX
     var source: AVAudioSourceNode?
@@ -71,7 +71,7 @@ private final class Channel {
     /// Tremolo LFO phase (radians), advanced per rendered frame.
     var lfoPhase: Double = 0
 
-    init(id: URL, fx: PianoPlayer.LayerFX) {
+    init(id: UUID, fx: PianoPlayer.LayerFX) {
         self.id = id
         self.fx = fx
     }
@@ -81,15 +81,15 @@ private final class Channel {
 /// CoreMIDI. Local audition only — factory pianos are Clavia's audio; never extract or share.
 public final class PianoPlayer {
     private(set) var layers: [Layer] = []
-    /// URLs of the loaded layers, for UI sync.
-    public var layerIDs: [URL] {
+    /// IDs of the loaded layers, for UI sync.
+    public var layerIDs: [UUID] {
         lock.lock(); defer { lock.unlock() }
         return layers.map(\.id)
     }
 
     private let engine = AVAudioEngine()
     private let lock = NSLock()
-    private var channels: [URL: Channel] = [:]
+    private var channels: [UUID: Channel] = [:]
     private var sustainPedal = false
     private var outRate: Double = 44_100
     /// Pitch bend in semitones (±2), from MIDI 0xE0. Multiplies every voice's rate.
@@ -102,7 +102,7 @@ public final class PianoPlayer {
     private var boostLinear: Float = 1
 
     /// FX settings for layers that have no channel yet (engine not started).
-    private var pendingFX: [URL: LayerFX] = [:]
+    private var pendingFX: [UUID: LayerFX] = [:]
 
     private var filterUnit: AVAudioUnit?
     private var compUnit: AVAudioUnit?
@@ -236,14 +236,14 @@ public final class PianoPlayer {
     /// Single-piano convenience init (CLI).
     public convenience init(bytes: [UInt8]) throws {
         self.init()
-        _ = try addLayer(bytes: bytes, id: URL(fileURLWithPath: "piano.npno"))
+        _ = try addLayer(bytes: bytes, id: UUID())
     }
 
     public init() {}
 
     /// Add a piano to the layered mix; returns its index. Layers mix in parallel.
     @discardableResult
-    public func addLayer(bytes: [UInt8], id: URL, gain: Float = 1) throws -> Int {
+    public func addLayer(bytes: [UInt8], id: UUID, gain: Float = 1) throws -> Int {
         let dir = try readNspDirectory(bytes)
         let zones = readNspZones(bytes)
         guard !zones.isEmpty else { throw NspError.noDirectory }
@@ -257,7 +257,7 @@ public final class PianoPlayer {
         if engine.isRunning { attachChannel(id: id) }
         prewarm(idx)
         if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
-            print("nordpiano: addLayer \(id.lastPathComponent), engine running \(engine.isRunning), channels \(self.channels.keys.map { $0.lastPathComponent })")
+            print("nordpiano: addLayer \(id.uuidString.prefix(8)), engine running \(engine.isRunning), channels \(self.channels.keys.count)")
         }
         return idx
     }
@@ -265,7 +265,7 @@ public final class PianoPlayer {
     /// Add a Nord Sample (`.nsmp3`/`.nsmp4`) to the layered mix; returns its index.
     /// Strokes decode lazily on the first note that references them.
     @discardableResult
-    public func addSampleLayer(bytes: [UInt8], id: URL, gain: Float = 1) throws -> Int {
+    public func addSampleLayer(bytes: [UInt8], id: UUID, gain: Float = 1) throws -> Int {
         let identity = identifyNsmp(bytes)
         guard identity.recognized, !identity.legacy,
               let codec = identity.codec, codec == 3 || codec == 4 else { throw NsmpError.notASample }
@@ -315,7 +315,7 @@ public final class PianoPlayer {
         }
     }
 
-    public func removeLayer(id: URL) {
+    public func removeLayer(id: UUID) {
         lock.lock()
         layers.removeAll { $0.id == id }
         let channel = channels.removeValue(forKey: id)
@@ -324,14 +324,14 @@ public final class PianoPlayer {
         if engine.isRunning, let channel { detach(channel: channel) }
     }
 
-    public func setLayerGain(_ gain: Float, id: URL) {
+    public func setLayerGain(_ gain: Float, id: UUID) {
         lock.lock()
         if let i = layers.firstIndex(where: { $0.id == id }) { layers[i].gain = gain }
         lock.unlock()
     }
 
     /// Mute a layer: kills its sounding voices and blocks new ones.
-    public func setLayerMuted(_ muted: Bool, id: URL) {
+    public func setLayerMuted(_ muted: Bool, id: UUID) {
         lock.lock()
         if let i = layers.firstIndex(where: { $0.id == id }) { layers[i].muted = muted }
         if muted, let channel = channels[id] { channel.voices.removeAll() }
@@ -413,9 +413,9 @@ public final class PianoPlayer {
 
     // MARK: - Channel strips (per-layer source + EQ + filter + comp + reverb)
 
-    private func attachChannel(id: URL) {
+    private func attachChannel(id: UUID) {
         if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
-            print("nordpiano: attachChannel enter \(id.lastPathComponent), engine running \(engine.isRunning)")
+            print("nordpiano: attachChannel enter \(id.uuidString.prefix(8)), engine running \(engine.isRunning)")
         }
         guard channels[id] == nil else { return }
         let fx = pendingFX[id] ?? LayerFX()
@@ -431,14 +431,14 @@ public final class PianoPlayer {
             channel.delay = try makeEffect(kAudioUnitSubType_Delay)
             channel.reverb = try makeEffect(kAudioUnitSubType_Reverb2)
         } catch {
-            print("nordpiano: attachChannel \(id.lastPathComponent) FAILED: \(error)")
+            print("nordpiano: attachChannel \(id.uuidString.prefix(8)) FAILED: \(error)")
             return
         }
         let units = [channel.eqLow, channel.eqMid, channel.eqHigh,
                      channel.filter, channel.comp, channel.drive, channel.delay, channel.reverb]
         for unit in units { engine.attach(unit!) }
         if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
-            print("nordpiano: attachChannel \(id.lastPathComponent) units ok")
+            print("nordpiano: attachChannel \(id.uuidString.prefix(8)) units ok")
         }
 
         let source = AVAudioSourceNode(format: format) { [weak self] isSilence, _, frameCount, audioBufferList -> OSStatus in
@@ -474,7 +474,7 @@ public final class PianoPlayer {
     }
 
     /// Per-layer FX: EQ shelves/peaking, filter, compressor, reverb. All bypassed when off/flat.
-    public func setLayerFX(_ fx: LayerFX, id: URL) {
+    public func setLayerFX(_ fx: LayerFX, id: UUID) {
         lock.lock()
         pendingFX[id] = fx
         if let channel = channels[id] {
@@ -484,7 +484,7 @@ public final class PianoPlayer {
         lock.unlock()
     }
 
-    public func layerFX(id: URL) -> LayerFX {
+    public func layerFX(id: UUID) -> LayerFX {
         lock.lock(); defer { lock.unlock() }
         return channels[id]?.fx ?? pendingFX[id] ?? LayerFX()
     }
@@ -779,7 +779,7 @@ public final class PianoPlayer {
         let snapshot = layers
         lock.unlock()
         if ProcessInfo.processInfo.environment["NORD_DEBUG"] != nil {
-            print("nordpiano: noteOn \(note) vel \(velocity), layers \(snapshot.map { $0.id.lastPathComponent }), engine running \(engine.isRunning)")
+            print("nordpiano: noteOn \(note) vel \(velocity), layers \(snapshot.map { $0.id.uuidString.prefix(8) }), engine running \(engine.isRunning)")
         }
         for layer in snapshot {
             if layer.muted { continue }
@@ -985,7 +985,7 @@ public final class PianoPlayer {
 
     // MARK: - Render (audio thread, one source-node callback per channel)
 
-    private func render(channelID: URL, intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
+    private func render(channelID: UUID, intoL outL: UnsafeMutablePointer<Float>, r outR: UnsafeMutablePointer<Float>, frames: Int) {
         for frame in 0..<frames {
             outL[frame] = 0
             outR[frame] = 0
