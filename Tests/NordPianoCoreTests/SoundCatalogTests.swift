@@ -34,12 +34,47 @@ final class SoundCatalogTests: XCTestCase {
         XCTAssertEqual(SoundClassifier.category(ext: "nsmp4", name: "Mystery"), .other)
     }
 
+    func testOrganSubcategory() {
+        for name in ["B3 Tonewheel", "Hammond C3", "B3 Bass Pedals"] {
+            XCTAssertEqual(SoundClassifier.organSubcategory(name: name), .b3, name)
+        }
+        for name in ["Farfisa Compact", "Vox Continental"] {
+            XCTAssertEqual(SoundClassifier.organSubcategory(name: name), .farfisa, name)
+        }
+        for name in ["Pipe Principal", "Cathedral Organ", "Gamba 8"] {
+            XCTAssertEqual(SoundClassifier.organSubcategory(name: name), .pipe, name)
+        }
+    }
+
+    func testSynthSubcategory() {
+        for name in ["101 Bass 1", "Sub Wave"] {
+            XCTAssertEqual(SoundClassifier.synthSubcategory(name: name), .sub, name)
+        }
+        for name in ["Analog Pad Nine", "Crystal Pad"] {
+            XCTAssertEqual(SoundClassifier.synthSubcategory(name: name), .pad, name)
+        }
+        for name in ["Saw Lead X", "Soft Wave Lead"] {
+            XCTAssertEqual(SoundClassifier.synthSubcategory(name: name), .lead, name)
+        }
+    }
+
+    func testImportClassifiesSubcategoryAndSize() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var catalog = SoundCatalog()
+        let entry = try catalog.importFile(at: fixtureURL, libraryRoot: root) // Soft Wave Lead
+        XCTAssertEqual(entry.subcategory, SynthSubcategory.lead.rawValue)
+        XCTAssertEqual(entry.synthSubcategory, .lead)
+        XCTAssertGreaterThan(entry.sizeBytes, 0)
+    }
+
     // MARK: - Persistence round-trip
 
     func testSaveLoadRoundTrip() throws {
         var catalog = SoundCatalog()
         let entry = CatalogEntry(name: "Grand Imperial", version: "6.10", category: .piano,
-                                 subcategory: .grand, path: "/tmp/x/Grand Imperial.npno")
+                                 subcategory: "grand", path: "/tmp/x/Grand Imperial.npno")
         catalog.entries.append(entry)
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString).appendingPathComponent("catalog.json")
@@ -110,12 +145,12 @@ final class SoundCatalogTests: XCTestCase {
     func testEntriesFilteringAndRecategorize() throws {
         var catalog = SoundCatalog()
         catalog.entries = [
-            CatalogEntry(name: "B Grand", version: "", category: .piano, subcategory: .grand, path: "/b"),
-            CatalogEntry(name: "A EP", version: "", category: .piano, subcategory: .ep, path: "/a"),
+            CatalogEntry(name: "B Grand", version: "", category: .piano, subcategory: "grand", path: "/b"),
+            CatalogEntry(name: "A EP", version: "", category: .piano, subcategory: "ep", path: "/a"),
             CatalogEntry(name: "C Organ", version: "", category: .organ, subcategory: nil, path: "/c"),
         ]
         XCTAssertEqual(catalog.entries(in: .piano).map(\.name), ["A EP", "B Grand"])
-        XCTAssertEqual(catalog.entries(in: .piano, subcategory: .ep).map(\.name), ["A EP"])
+        XCTAssertEqual(catalog.entries(in: .piano, subcategory: "ep").map(\.name), ["A EP"])
 
         let ep = catalog.entries[1]
         catalog.recategorize(ep, to: .organ)

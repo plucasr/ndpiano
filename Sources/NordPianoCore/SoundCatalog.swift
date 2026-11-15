@@ -10,6 +10,16 @@ public enum PianoSubcategory: String, Codable, CaseIterable {
     case grand, upright, ep
 }
 
+/// Sub-navigation inside the Organ engine (B3 / FARF / PIPE).
+public enum OrganSubcategory: String, Codable, CaseIterable {
+    case b3, farfisa, pipe
+}
+
+/// Sub-navigation inside the Synth engine (SUB / PAD / LEAD).
+public enum SynthSubcategory: String, Codable, CaseIterable {
+    case sub, pad, lead
+}
+
 /// One imported sound: identity comes from the file header at import time, the
 /// rest is user data. `id` is stable — scenes and channels reference it, never
 /// the path, so moving the managed library doesn't break anything.
@@ -18,14 +28,17 @@ public struct CatalogEntry: Identifiable, Codable, Equatable {
     public var name: String
     public var version: String
     public var category: SoundCategory
-    /// Only meaningful when category == .piano.
-    public var subcategory: PianoSubcategory?
+    /// Raw value of the category's subcategory enum (e.g. "grand", "b3", "pad").
+    /// A plain string so old catalogs decode no matter which enums exist.
+    public var subcategory: String?
     /// Absolute path — inside the managed library (copied) or the original
     /// location (imported by reference).
     public var path: String
     public var dateAdded: Date
+    /// File size at import time (panel headers show totals).
+    public var sizeBytes: Int64 = 0
     public init(id: UUID = UUID(), name: String, version: String, category: SoundCategory,
-                subcategory: PianoSubcategory?, path: String, dateAdded: Date = Date()) {
+                subcategory: String?, path: String, dateAdded: Date = Date(), sizeBytes: Int64 = 0) {
         self.id = id
         self.name = name
         self.version = version
@@ -33,7 +46,12 @@ public struct CatalogEntry: Identifiable, Codable, Equatable {
         self.subcategory = subcategory
         self.path = path
         self.dateAdded = dateAdded
+        self.sizeBytes = sizeBytes
     }
+
+    public var pianoSubcategory: PianoSubcategory? { subcategory.flatMap(PianoSubcategory.init) }
+    public var organSubcategory: OrganSubcategory? { subcategory.flatMap(OrganSubcategory.init) }
+    public var synthSubcategory: SynthSubcategory? { subcategory.flatMap(SynthSubcategory.init) }
 }
 
 /// Name-based classification. Neither file format carries an instrument-type
@@ -58,6 +76,36 @@ public enum SoundClassifier {
             || n.range(of: #"\bcfx\b"#, options: .regularExpression) != nil || n.contains("bösendorfer") || n.contains("bosendorfer") {
             return .grand
         }
+        return nil
+    }
+
+    /// Organ subcategory from a sound name; nil = unknown.
+    public static func organSubcategory(name: String) -> OrganSubcategory? {
+        let n = name.lowercased()
+        if n.contains("pipe") || n.contains("principal") || n.contains("cathedral")
+            || n.contains("church") || n.contains("gamba") {
+            return .pipe
+        }
+        if n.contains("farfisa") || n.contains("vox") || n.contains("continental")
+            || n.contains("combo") {
+            return .farfisa
+        }
+        if n.range(of: #"\bb-?3\b"#, options: .regularExpression) != nil
+            || n.contains("hammond") || n.contains("tonewheel")
+            || n.range(of: #"\bc-?3\b"#, options: .regularExpression) != nil
+            || n.range(of: #"\ba-?100\b"#, options: .regularExpression) != nil {
+            return .b3
+        }
+        return nil
+    }
+
+    /// Synth subcategory from a sound name; nil = unknown.
+    public static func synthSubcategory(name: String) -> SynthSubcategory? {
+        let n = name.lowercased()
+        if n.contains("sub") || n.contains("bass") { return .sub }
+        if n.contains("pad") || n.contains("string") || n.contains("ambient")
+            || n.contains("crystal") { return .pad }
+        if n.contains("lead") || n.contains("solo") { return .lead }
         return nil
     }
 
@@ -134,7 +182,7 @@ public struct SoundCatalog: Codable {
     @discardableResult
     public mutating func importFile(at source: URL,
                                     category: SoundCategory? = nil,
-                                    subcategory: PianoSubcategory? = nil,
+                                    subcategory: String? = nil,
                                     copy: Bool = true,
                                     libraryRoot: URL = defaultLibraryRoot) throws -> CatalogEntry {
         let ext = source.pathExtension.lowercased()
@@ -147,9 +195,14 @@ public struct SoundCatalog: Codable {
         let resolvedCategory = category
             ?? SoundClassifier.category(ext: ext, name: name,
                                         sourceFolder: source.deletingLastPathComponent().lastPathComponent)
-        let resolvedSubcategory: PianoSubcategory? = resolvedCategory == .piano
-            ? (subcategory ?? SoundClassifier.pianoSubcategory(name: name))
-            : nil
+        let heuristic: String? = switch resolvedCategory {
+        case .piano: SoundClassifier.pianoSubcategory(name: name)?.rawValue
+        case .organ: SoundClassifier.organSubcategory(name: name)?.rawValue
+        case .synth: SoundClassifier.synthSubcategory(name: name)?.rawValue
+        case .other: nil
+        }
+        let resolvedSubcategory = subcategory ?? heuristic
+        let size = (try? FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int64) ?? 0
 
         var destination = source
         if copy {
@@ -162,7 +215,8 @@ public struct SoundCatalog: Codable {
         }
 
         let entry = CatalogEntry(name: name, version: version, category: resolvedCategory,
-                                 subcategory: resolvedSubcategory, path: destination.path)
+                                 subcategory: resolvedSubcategory, path: destination.path,
+                                 sizeBytes: size)
         if let i = entries.firstIndex(where: { $0.path == source.path && copy == false }) {
             entries[i] = entry // re-import by reference: refresh identity/category
         } else if let i = entries.firstIndex(where: { $0.name == name && $0.path == destination.path }) {
@@ -179,13 +233,13 @@ public struct SoundCatalog: Codable {
     }
 
     public mutating func recategorize(_ entry: CatalogEntry, to category: SoundCategory,
-                                      subcategory: PianoSubcategory? = nil) {
+                                      subcategory: String? = nil) {
         guard let i = entries.firstIndex(where: { $0.id == entry.id }) else { return }
         entries[i].category = category
         entries[i].subcategory = category == .piano ? subcategory : nil
     }
 
-    public func entries(in category: SoundCategory, subcategory: PianoSubcategory? = nil) -> [CatalogEntry] {
+    public func entries(in category: SoundCategory, subcategory: String? = nil) -> [CatalogEntry] {
         entries
             .filter { $0.category == category && (subcategory == nil || $0.subcategory == subcategory) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }

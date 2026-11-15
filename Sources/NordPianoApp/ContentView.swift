@@ -262,7 +262,7 @@ struct ContentView: View {
         case .files:
             filesList
         case .piano:
-            catalogList(entries: model.catalog.entries(in: .piano, subcategory: pianoFilter),
+            catalogList(entries: model.catalog.entries(in: .piano, subcategory: pianoFilter?.rawValue),
                         emptyLabel: pianoFilter == nil ? "pianos" : "\(pianoFilter!.rawValue)s")
         case .organ:
             catalogList(entries: model.catalog.entries(in: .organ), emptyLabel: "organs")
@@ -335,9 +335,9 @@ struct ContentView: View {
             if entry.category == .piano {
                 Menu("Piano type…") {
                     ForEach(PianoSubcategory.allCases, id: \.self) { sub in
-                        if sub != entry.subcategory {
+                        if sub.rawValue != entry.subcategory {
                             Button(sub.rawValue.capitalized) {
-                                model.recategorize(entry, to: .piano, subcategory: sub)
+                                model.recategorize(entry, to: .piano, subcategory: sub.rawValue)
                             }
                         }
                     }

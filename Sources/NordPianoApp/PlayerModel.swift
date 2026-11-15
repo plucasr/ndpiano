@@ -97,7 +97,7 @@ final class PlayerModel: ObservableObject {
         if ok > 0 { status = "Imported \(ok) sound\(ok == 1 ? "" : "s") into the library" }
     }
 
-    func recategorize(_ entry: CatalogEntry, to category: SoundCategory, subcategory: PianoSubcategory? = nil) {
+    func recategorize(_ entry: CatalogEntry, to category: SoundCategory, subcategory: String? = nil) {
         catalog.recategorize(entry, to: category, subcategory: subcategory)
         try? catalog.save()
     }
