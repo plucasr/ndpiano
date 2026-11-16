@@ -85,6 +85,7 @@ struct ContentView: View {
         alert.messageText = title
         let field = NSTextField(string: initial)
         field.placeholderString = "Scene name"
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 26)
         alert.accessoryView = field
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
