@@ -22,6 +22,7 @@ struct ContentView: View {
             return true
         } isTargeted: { isDropTarget = $0 }
         .overlay(isDropTarget ? NordColor.red.opacity(0.15).ignoresSafeArea() : nil)
+        .overlay { if namePrompt != nil { namePromptOverlay } }
         .onOpenURL { model.load(url: $0) }
         .onAppear {
             // Open a file passed on the command line (e.g. `open -a NordPiano file.npno`).
@@ -33,6 +34,15 @@ struct ContentView: View {
 
     /// FILES view (folder-scanned library) replaces the engine panels when on.
     @State private var showFiles = false
+    /// Custom name prompt (scene save/rename) — replaces the ugly NSAlert.
+    @State private var namePrompt: NamePrompt?
+    @State private var namePromptText = ""
+
+    struct NamePrompt {
+        let title: String
+        let initial: String
+        let action: (String) -> Void
+    }
 
     /// Map a section title ("Root / subfolder") back to its library root URL.
     private func folderURL(for title: String) -> URL {
@@ -79,36 +89,78 @@ struct ContentView: View {
         }
     }
 
-    /// Name prompt for saving a scene (modal field, same approach as NSOpenPanel).
-    private func promptForName(title: String, initial: String = "") -> String? {
-        let alert = NSAlert()
-        alert.messageText = title
-        let field = NSTextField(string: initial)
-        field.placeholderString = "Scene name"
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 26)
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
-        return name.isEmpty ? nil : name
-    }
-
     private func saveScene() {
         guard !model.selected.isEmpty else {
             model.status = "Select at least one sound before saving a scene"
             return
         }
-        if let name = promptForName(title: "Save current setup as a scene") {
+        namePromptText = ""
+        namePrompt = NamePrompt(title: "SAVE SCENE", initial: "") { name in
             model.saveScene(name: name)
         }
     }
 
     private func renameScene(_ scene: PlayerModel.Scene) {
-        guard let name = promptForName(title: "Rename scene", initial: scene.name) else { return }
-        model.renameScene(scene, to: name)
+        namePromptText = scene.name
+        namePrompt = NamePrompt(title: "RENAME SCENE", initial: scene.name) { name in
+            model.renameScene(scene, to: name)
+        }
+    }
+
+    /// App-styled modal name prompt: dark card, red accent, Enter = save, Esc = cancel.
+    private var namePromptOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+                .onTapGesture { namePrompt = nil }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(NordColor.red)
+                        .frame(width: 6, height: 16)
+                    Text(namePrompt?.title ?? "")
+                        .font(NordFont.font(13, weight: .bold))
+                        .foregroundStyle(NordColor.text)
+                }
+                TextField("Scene name", text: $namePromptText)
+                    .textFieldStyle(.plain)
+                    .font(NordFont.font(12))
+                    .foregroundStyle(NordColor.text)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(NordColor.background)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6)
+                        .stroke(NordColor.red.opacity(0.5), lineWidth: 1))
+                    .onSubmit { commitNamePrompt() }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { namePrompt = nil }
+                        .buttonStyle(.bordered)
+                        .tint(.gray)
+                    Button("Save") { commitNamePrompt() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(NordColor.red)
+                        .disabled(namePromptText.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(16)
+            .frame(width: 320)
+            .background(NordColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10)
+                .stroke(NordColor.red.opacity(0.35), lineWidth: 1))
+            .shadow(radius: 20)
+            .onExitCommand { namePrompt = nil }
+        }
+    }
+
+    private func commitNamePrompt() {
+        let name = namePromptText.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let prompt = namePrompt else { return }
+        namePrompt = nil
+        prompt.action(name)
     }
 
     private var header: some View {
