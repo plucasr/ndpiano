@@ -63,8 +63,11 @@ Status: DONE (build green). Layout is the Minimoog front-panel order inside
 the existing popover — no fullscreen modal.
 
 ## Phase 5 — Starter presets
-- [ ] 3 lead presets tuned by ear (compare against openmini / CA-72 VST).
-Status: NOT STARTED
+- [x] MoogFactory bank (7 presets: Mini Lead, Prog Lead, Square Lead,
+      Soft Flute, Pulse Bass, Sub Bass, Reso Sweep), auto-seeded into the
+      catalog on first launch (once ever, only into an empty MOOG category).
+- [ ] Ear-tuning pass with the user (adjust values / add presets as needed).
+Status: SEEDED — tuning feedback welcome.
 
 ## Working state for handoff
 - Branch: main. All prior work committed/pushed before Phase 1 start.
