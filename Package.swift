@@ -6,9 +6,10 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .target(name: "NordPianoCore"),
+        .target(name: "NordMoog"),
         .target(
             name: "NordPianoEngine",
-            dependencies: ["NordPianoCore"]
+            dependencies: ["NordPianoCore", "NordMoog"]
         ),
         .executableTarget(
             name: "nordpiano",
@@ -21,6 +22,10 @@ let package = Package(
         .testTarget(
             name: "NordPianoCoreTests",
             dependencies: ["NordPianoCore", "NordPianoEngine"]
+        ),
+        .testTarget(
+            name: "NordMoogTests",
+            dependencies: ["NordMoog"]
         ),
     ]
 )

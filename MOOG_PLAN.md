@@ -16,14 +16,16 @@ Design decisions (agreed with user):
   the Minimoog front panel: OSCILLATOR BANK | MIXER | FILTER | CONTOURS | OUTPUT/GLIDE.
 
 ## Phase 1 — NordMoog target: minimal voice (engine only)
-- [ ] New target `NordMoog` in Package.swift (+ `Sources/NordMoog/`, + `NordMoogTests`).
-- [ ] `MoogVoice`: 2 detunable saw + 1 pulse oscillator → mixer → ladder filter
-      (reuse/port the ladder model from NordPianoEngine/SynthDSP.swift) → ADSR
-      amp envelope; mono with glide/legato.
-- [ ] `MoogPatch`: Codable parameter set (osc ranges/waves/detune, mixer levels,
-      cutoff/resonance/env-amount/keytrack, filter+amp ADSR, glide time).
-- [ ] Render tests: note renders audio, glide sweeps, filter envelope moves cutoff.
-Status: NOT STARTED
+- [x] New target `NordMoog` in Package.swift (+ `Sources/NordMoog/`, + `NordMoogTests`).
+- [x] `MoogVoice`: 3 PolyBLEP oscillators (saw/pulse, osc2/3 detune in cents,
+      osc3 octave) → mixer (levels + white noise) → 4-pole ladder w/ feedback
+      resonance & tanh overload → filter + amp ADSR contours; mono, last-note
+      priority, legato, exponential glide. `Sources/NordMoog/MoogVoice.swift`.
+- [x] `MoogPatch`: Codable/Sendable parameter set in physical units
+      (`Sources/NordMoog/MoogPatch.swift`), `MoogPatch.lead` starter.
+- [x] Render tests: renders audio, decays to silence, glide sweeps & settles,
+      no-glide snaps, filter env opens cutoff, patch Codable round-trip.
+Status: DONE (6/6 tests green)
 
 ## Phase 2 — Engine integration
 - [ ] PianoPlayer hosts a moog voice as a layer type alongside sample layers;

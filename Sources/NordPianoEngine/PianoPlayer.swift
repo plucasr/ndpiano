@@ -4,6 +4,7 @@ import CoreMIDI
 import AVFAudio
 import AudioToolbox
 import NordPianoCore
+import NordMoog
 
 /// Real-time piano voice: one decoded stroke being played.
 /// Live controller positions (each 0…1) that drive program morphs.
@@ -83,6 +84,9 @@ enum LayerSource {
     /// SF2/DLS: no decoding of our own — an AVAudioUnitSampler in the channel's
     /// graph position loads the bank; notes are forwarded as MIDI messages.
     case soundFont(url: URL)
+    /// Moog-style mono lead voice (NordMoog module): synthesized live in the
+    /// channel's render callback, no samples involved.
+    case moog
 }
 
 struct Layer {
@@ -164,6 +168,10 @@ private final class Channel {
     /// Notes currently sounding in the sampler (keyboard markers; the sampler
     /// renders internally, so they don't appear in `voices`).
     var soundingNotes: Set<Int> = []
+    /// Moog layers: the live mono voice rendered by the source node.
+    var moog: MoogVoice?
+    /// Notes sounding in the moog voice (keyboard markers).
+    var moogNotes: Set<Int> = []
 
     init(id: UUID, fx: PianoPlayer.LayerFX) {
         self.id = id
@@ -620,6 +628,35 @@ public final class PianoPlayer {
         return idx
     }
 
+    /// Add a Moog-style mono lead voice (NordMoog) to the layered mix; returns
+    /// its index. Nothing to decode — the voice synthesizes in the channel's
+    /// render callback. `patch` is the starting parameter set.
+    @discardableResult
+    public func addMoogLayer(id: UUID, gain: Float = 1, patch: MoogPatch = .lead) -> Int {
+        lock.lock()
+        layers.append(Layer(id: id, gain: gain, source: .moog))
+        let idx = layers.count - 1
+        lock.unlock()
+        if engine.isRunning { attachChannel(id: id) }
+        lock.lock()
+        channels[id]?.moog?.patch = patch
+        lock.unlock()
+        return idx
+    }
+
+    /// Replace a moog layer's patch (preset load or panel edit).
+    public func setMoogPatch(_ patch: MoogPatch, id: UUID) {
+        lock.lock()
+        channels[id]?.moog?.patch = patch
+        lock.unlock()
+    }
+
+    /// The moog voice's current patch, if the layer is a moog layer.
+    public func moogPatch(id: UUID) -> MoogPatch? {
+        lock.lock(); defer { lock.unlock() }
+        return channels[id]?.moog?.patch
+    }
+
     /// Add a Nord Sample (`.nsmp3`/`.nsmp4`) to the layered mix; returns its index.
     /// Strokes decode lazily on the first note that references them.
     @discardableResult
@@ -662,6 +699,8 @@ public final class PianoPlayer {
                 }
             case .soundFont:
                 break // the sampler loads its own bank; nothing to pre-decode
+            case .moog:
+                break // synthesized live; nothing to pre-decode
             }
         }
     }
@@ -679,6 +718,8 @@ public final class PianoPlayer {
             case .sfz(let regions, _, _):
                 return regions.map(\.rootKey)
             case .soundFont:
+                return []
+            case .moog:
                 return []
             }
         }
@@ -821,12 +862,15 @@ public final class PianoPlayer {
         // (same EQ/filter/comp/… strip downstream); notes reach it as MIDI
         // messages instead of our voice render.
         lock.lock()
+        let layerSource = layers.first(where: { $0.id == id })?.source
         let soundFontURL: URL? = {
-            if case .soundFont(let url) = layers.first(where: { $0.id == id })?.source { return url }
+            if case .soundFont(let url) = layerSource { return url }
             return nil
         }()
+        let isMoog = layerSource.map { if case .moog = $0 { return true }; return false } ?? false
         let layerGain = layers.first(where: { $0.id == id })?.gain ?? 1
         lock.unlock()
+        if isMoog { channel.moog = MoogVoice(sampleRate: outRate) }
         if let url = soundFontURL {
             let sampler = AVAudioUnitSampler()
             engine.attach(sampler)
@@ -1301,6 +1345,15 @@ public final class PianoPlayer {
                 soundFontPlayed = true
                 continue
             }
+            if case .moog = layer.source {
+                lock.lock()
+                let channel = channel(for: layer)
+                if channel.moog == nil { channel.moog = MoogVoice(sampleRate: outRate) }
+                channel.moogNotes.insert(note)
+                channel.moog?.noteOn(note: note, velocity: velocity)
+                lock.unlock()
+                continue
+            }
             if fx.arpOn {
                 // Arpeggiator: the key joins the pattern; the arp clock plays it.
                 lock.lock()
@@ -1521,6 +1574,10 @@ public final class PianoPlayer {
                 sampler.stopNote(UInt8(clamping: note), onChannel: 0)
                 soundFontChanged = channel.soundingNotes.remove(note) != nil || soundFontChanged
             }
+            if channel.moog != nil {
+                if channel.moogNotes.remove(note) != nil { channel.moog?.noteOff(note: note) }
+                continue
+            }
             let fx = channel.fx
             if fx.arpOn && channel.arpRunning {
                 // Arp notes end on the arp's own gate, not on key-up.
@@ -1639,6 +1696,7 @@ public final class PianoPlayer {
         for ch in channels.values {
             all.formUnion(ch.voices.map(\.note))
             all.formUnion(ch.soundingNotes)
+            all.formUnion(ch.moogNotes)
         }
         let changed = all != lastSounding
         if changed { lastSounding = all }
@@ -1719,6 +1777,8 @@ public final class PianoPlayer {
             }
         case .soundFont:
             return [] // the channel's sampler handles its own notes
+        case .moog:
+            return [] // the channel's moog voice handles its own notes
         }
     }
 
@@ -1836,10 +1896,21 @@ public final class PianoPlayer {
         let morph = MorphSources(wheel: tremoloDepth, aftertouch: aftertouchValue,
                                  pedal: controlPedalValue)
         let mod = fillModulation(channel, fx: fx, morph: morph, frames: frames)
+        if let moog = channel.moog {
+            // Moog layer: the voice renders mono into L; copy to R. The FX
+            // strip (EQ/filter/…), chorus and pan below still apply downstream.
+            let gain = (layers.first(where: { $0.id == channelID })?.gain ?? 1) * master
+            moog.render(into: UnsafeMutableBufferPointer(start: outL, count: frames), frames: frames)
+            for frame in 0..<frames {
+                outL[frame] *= gain
+                outR[frame] = outL[frame]
+            }
+        } else {
         renderVoices(&channel.voices, master: master, bendMul: bendMul, mod: mod,
                      releaseTau: releaseTau * pow(60, fx.releaseTimeNorm),
                      fx: fx, morph: morph,
                      intoL: outL, r: outR, frames: frames)
+        }
         // Level morphs (wheel/aftertouch/pedal), ramped across the block.
         let targetLevel = Float(max(0, 1 + fx.wheelToLevel * Double(morph.wheel)
             + fx.atToLevel * Double(morph.aftertouch) + fx.pedalToLevel * Double(morph.pedal)))
@@ -1875,6 +1946,7 @@ public final class PianoPlayer {
         for ch in channels.values {
             all.formUnion(ch.voices.map(\.note))
             all.formUnion(ch.soundingNotes)
+            all.formUnion(ch.moogNotes)
         }
         let changed = all != lastSounding
         if changed { lastSounding = all }
