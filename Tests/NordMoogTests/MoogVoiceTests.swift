@@ -92,3 +92,17 @@ final class MoogVoiceTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(MoogPatch.self, from: data), patch)
     }
 }
+
+extension MoogVoiceTests {
+    func testPresetDecodeWrappedAndBare() throws {
+        let wrapped = #"{"name":"Mini Lead","version":1,"patch":{"cutoffHz":777}}"#.data(using: .utf8)!
+        let preset = try MoogPreset.decode(from: wrapped)
+        XCTAssertEqual(preset.name, "Mini Lead")
+        XCTAssertEqual(preset.patch.cutoffHz, 777)
+
+        let bare = #"{"cutoffHz":555,"glideSeconds":0.1}"#.data(using: .utf8)!
+        let barePreset = try MoogPreset.decode(from: bare)
+        XCTAssertEqual(barePreset.patch.cutoffHz, 555)
+        XCTAssertEqual(barePreset.patch.glideSeconds, 0.1)
+    }
+}

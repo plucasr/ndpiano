@@ -51,6 +51,41 @@ public struct MoogPatch: Equatable, Codable, Sendable {
 
     public init() {}
 
+    /// Backward/authoring-friendly decoding: any missing key falls back to the
+    /// default patch value, so partial and hand-written presets stay valid.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let fresh = MoogPatch()
+        func get<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+        }
+        osc1Pulse = try get(.osc1Pulse, fresh.osc1Pulse)
+        osc2Pulse = try get(.osc2Pulse, fresh.osc2Pulse)
+        osc3Pulse = try get(.osc3Pulse, fresh.osc3Pulse)
+        osc2DetuneCents = try get(.osc2DetuneCents, fresh.osc2DetuneCents)
+        osc3DetuneCents = try get(.osc3DetuneCents, fresh.osc3DetuneCents)
+        osc3Octave = try get(.osc3Octave, fresh.osc3Octave)
+        pulseWidth = try get(.pulseWidth, fresh.pulseWidth)
+        osc1Level = try get(.osc1Level, fresh.osc1Level)
+        osc2Level = try get(.osc2Level, fresh.osc2Level)
+        osc3Level = try get(.osc3Level, fresh.osc3Level)
+        noiseLevel = try get(.noiseLevel, fresh.noiseLevel)
+        cutoffHz = try get(.cutoffHz, fresh.cutoffHz)
+        resonance = try get(.resonance, fresh.resonance)
+        filterEnvOctaves = try get(.filterEnvOctaves, fresh.filterEnvOctaves)
+        keyTrack = try get(.keyTrack, fresh.keyTrack)
+        filterAttack = try get(.filterAttack, fresh.filterAttack)
+        filterDecay = try get(.filterDecay, fresh.filterDecay)
+        filterSustain = try get(.filterSustain, fresh.filterSustain)
+        filterRelease = try get(.filterRelease, fresh.filterRelease)
+        ampAttack = try get(.ampAttack, fresh.ampAttack)
+        ampDecay = try get(.ampDecay, fresh.ampDecay)
+        ampSustain = try get(.ampSustain, fresh.ampSustain)
+        ampRelease = try get(.ampRelease, fresh.ampRelease)
+        glideSeconds = try get(.glideSeconds, fresh.glideSeconds)
+        volume = try get(.volume, fresh.volume)
+    }
+
     /// Sensible mono lead starting point.
     public static let lead = MoogPatch()
 }

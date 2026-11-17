@@ -137,7 +137,7 @@ if args[1] == "import" {
                     case .organ: SoundClassifier.organSubcategory(name: name)?.rawValue
                     case .synth: SoundClassifier.synthSubcategory(name: name)?.rawValue
                     case .orchestral: SoundClassifier.orchestralSubcategory(name: name)?.rawValue
-                    case .other: nil
+                    case .moog, .other: nil
                     }
                     print("\(cat.rawValue)/\(sub ?? "?")  \(name)")
                     if sub == nil { review.append("\(name)  <\(folder)>") }

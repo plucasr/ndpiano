@@ -171,7 +171,7 @@ struct ContentView: View {
         case .organ: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) }
         case .synth: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) }
         case .orchestral: OrchestralSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) }
-        case .other: []
+        case .moog, .other: []
         }
     }
 
@@ -423,7 +423,7 @@ struct ContentView: View {
     /// UTTypes for the file pickers. Unknown extensions ("sfz") get a dynamic
     /// type via the conformingTo: fallback.
     private var supportedTypes: [UTType] {
-        ["npno", "nsmp3", "nsmp4", "sfz", "sf2", "nw2pbundle", "ne6pbundle", "ns4pbundle"].compactMap {
+        ["npno", "nsmp3", "nsmp4", "sfz", "sf2", "moog", "nw2pbundle", "ne6pbundle", "ns4pbundle"].compactMap {
             UTType(filenameExtension: $0) ?? UTType(filenameExtension: $0, conformingTo: .data)
         }
     }
@@ -549,6 +549,8 @@ struct ContentView: View {
                                     subcategories: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
                     EnginePanelView(category: .synth, title: "SYNTH",
                                     subcategories: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+                    EnginePanelView(category: .moog, title: "MOOG",
+                                    subcategories: [])
                     EnginePanelView(category: .orchestral, title: "ORCHESTRAL",
                                     subcategories: OrchestralSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
                 }

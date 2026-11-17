@@ -2,7 +2,7 @@ import Foundation
 
 /// Engine box a sound belongs to (the Nord Stage panel sections).
 public enum SoundCategory: String, Codable, CaseIterable {
-    case piano, organ, synth, orchestral, other
+    case piano, organ, synth, moog, orchestral, other
 }
 
 /// Sub-navigation inside the Piano engine (GRAND / UPRIGHT / EP / CLAV buttons).
@@ -189,6 +189,7 @@ public enum SoundClassifier {
     /// those decide first; name keywords break ties for loose files.
     public static func category(ext: String, name: String, sourceFolder: String = "") -> SoundCategory {
         if ext == "npno" { return .piano }
+        if ext == "moog" { return .moog }
         let folder = sourceFolder.lowercased()
         if folder.contains("synth") { return .synth }
         if folder.contains("organ") { return .organ }
@@ -279,7 +280,7 @@ public struct SoundCatalog: Codable {
                                     copy: Bool = true,
                                     libraryRoot: URL = defaultLibraryRoot) throws -> CatalogEntry {
         let ext = source.pathExtension.lowercased()
-        guard ["npno", "nsmp3", "nsmp4", "sfz", "sf2"].contains(ext) else {
+        guard ["npno", "nsmp3", "nsmp4", "sfz", "sf2", "moog"].contains(ext) else {
             throw CatalogError.unsupportedType(ext)
         }
         // SFZ programs reference their samples by relative path — copying just
@@ -297,7 +298,7 @@ public struct SoundCatalog: Codable {
         case .organ: SoundClassifier.organSubcategory(name: name)?.rawValue
         case .synth: SoundClassifier.synthSubcategory(name: name)?.rawValue
         case .orchestral: SoundClassifier.orchestralSubcategory(name: name)?.rawValue
-        case .other: nil
+        case .moog, .other: nil
         }
         let resolvedSubcategory = subcategory ?? heuristic
         let size = (try? FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int64) ?? 0
@@ -349,6 +350,14 @@ public struct SoundCatalog: Codable {
     public static func identity(of url: URL) -> (name: String, version: String)? {
         let ext = url.pathExtension.lowercased()
         let fallback = url.deletingPathExtension().lastPathComponent
+        if ext == "moog" {
+            // JSON patch; the display name comes from the file's "name" key
+            // (bare patch files fall back to the filename).
+            guard let data = try? Data(contentsOf: url),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  obj["patch"] is [String: Any] || obj["cutoffHz"] != nil else { return nil }
+            return ((obj["name"] as? String) ?? fallback, "")
+        }
         if ext == "sfz" {
             guard !SfzParser.parseFile(url).regions.isEmpty else { return nil }
             return (fallback, "")

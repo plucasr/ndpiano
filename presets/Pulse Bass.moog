@@ -1,0 +1,31 @@
+{
+  "name" : "Pulse Bass",
+  "version" : 1,
+  "patch" : {
+    "ampAttack" : 0.002,
+    "ampDecay" : 0.25,
+    "ampRelease" : 0.08,
+    "ampSustain" : 0.85,
+    "cutoffHz" : 500,
+    "filterAttack" : 0.002,
+    "filterDecay" : 0.12,
+    "filterEnvOctaves" : 2.5,
+    "filterRelease" : 0.08,
+    "filterSustain" : 0.2,
+    "glideSeconds" : 0,
+    "keyTrack" : 0.2,
+    "noiseLevel" : 0,
+    "osc1Level" : 0.9,
+    "osc1Pulse" : true,
+    "osc2DetuneCents" : -1200,
+    "osc2Level" : 0.7,
+    "osc2Pulse" : false,
+    "osc3DetuneCents" : 0,
+    "osc3Level" : 0,
+    "osc3Octave" : -1,
+    "osc3Pulse" : false,
+    "pulseWidth" : 0.4,
+    "resonance" : 0.3,
+    "volume" : 0.85
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name" : "Mini Lead",
+  "version" : 1,
+  "patch" : {
+    "ampAttack" : 0.003,
+    "ampDecay" : 0.2,
+    "ampRelease" : 0.12,
+    "ampSustain" : 1,
+    "cutoffHz" : 2400,
+    "filterAttack" : 0.004,
+    "filterDecay" : 0.18,
+    "filterEnvOctaves" : 1.5,
+    "filterRelease" : 0.1,
+    "filterSustain" : 0.45,
+    "glideSeconds" : 0.06,
+    "keyTrack" : 0.4,
+    "noiseLevel" : 0,
+    "osc1Level" : 0.8,
+    "osc1Pulse" : false,
+    "osc2DetuneCents" : 8,
+    "osc2Level" : 0.8,
+    "osc2Pulse" : false,
+    "osc3DetuneCents" : -8,
+    "osc3Level" : 0.7,
+    "osc3Octave" : 0,
+    "osc3Pulse" : false,
+    "pulseWidth" : 0.5,
+    "resonance" : 0.18,
+    "volume" : 0.8
+  }
+}

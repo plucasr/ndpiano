@@ -39,10 +39,17 @@ Known pre-existing flake: LayerFXRenderTests.testArpStopsOnKeyUpUnlessHold
 (wall-clock arp timer; fails intermittently on HEAD too, unrelated).
 
 ## Phase 3 — Presets + catalog category
-- [ ] Moog preset type (wraps MoogPatch; same JSON story as FXPreset).
-- [ ] Catalog category `.moog` with preset-backed entries; mixer browsing and
-      ‹ › stepping works for moog sounds.
-Status: NOT STARTED
+- [x] `MoogPreset` in NordMoog: `.moog` file = named MoogPatch JSON (wrapped or
+      bare, missing keys fall back to patch defaults).
+- [x] Catalog category `.moog`: `.moog` extension imports like any sound
+      (identity from the file's "name" key, copied into Library/Moog).
+- [x] MOOG engine panel in the top taxonomy (ContentView); `.moog` in the
+      import picker; PlayerModel loads moog entries via `addMoogLayer`.
+- [x] Starter files: presets/Mini Lead.moog, presets/Pulse Bass.moog (import
+      them via the app's Import…).
+Status: DONE (25 tests green: catalog identity/import + preset decode).
+Moog channels currently show the standard FX panel — the moog-specific view
+is Phase 4.
 
 ## Phase 4 — Moog FX view
 - [ ] ChannelFXPanel shows the moog layout (sections above) for moog channels.

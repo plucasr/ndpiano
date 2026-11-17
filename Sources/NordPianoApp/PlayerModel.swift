@@ -4,6 +4,7 @@ import CoreAudio
 import CoreMIDI
 import NordPianoCore
 import NordPianoEngine
+import NordMoog
 
 private extension Array {
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
@@ -671,7 +672,7 @@ final class PlayerModel: ObservableObject {
         case .organ: SoundClassifier.organSubcategory(name: name)?.rawValue
         case .synth: SoundClassifier.synthSubcategory(name: name)?.rawValue
         case .orchestral: SoundClassifier.orchestralSubcategory(name: name)?.rawValue
-        case .other: nil
+        case .moog, .other: nil
         }
         return (name, category, subcategory)
     }
@@ -1226,6 +1227,9 @@ final class PlayerModel: ObservableObject {
         case "npno": try player.addLayer(bytes: bytes, id: id, gain: gain)
         case "sfz": try player.addSfzLayer(url: url, id: id, gain: gain)
         case "sf2": try player.addSoundFontLayer(url: url, id: id, gain: gain)
+        case "moog":
+            let preset = try MoogPreset.decode(from: Data(bytes))
+            player.addMoogLayer(id: id, gain: gain, patch: preset.patch)
         default: try player.addSampleLayer(bytes: bytes, id: id, gain: gain)
         }
     }

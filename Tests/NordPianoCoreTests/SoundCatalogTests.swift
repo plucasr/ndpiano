@@ -189,3 +189,31 @@ final class SoundCatalogTests: XCTestCase {
         XCTAssertNil(catalog.entries[1].subcategory)
     }
 }
+
+extension SoundCatalogTests {
+    /// A .moog file identifies by its JSON "name", classifies as moog.
+    func testMoogIdentityAndCategory() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mini-lead-\(UUID().uuidString).moog")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try #"{"name":"Mini Lead","patch":{"cutoffHz":2400}}"#.write(to: url, atomically: true, encoding: .utf8)
+        let id = SoundCatalog.identity(of: url)
+        XCTAssertEqual(id?.name, "Mini Lead")
+        XCTAssertEqual(SoundClassifier.category(ext: "moog", name: "Mini Lead"), .moog)
+    }
+
+    /// A .moog file imports into the managed library as a moog entry.
+    func testMoogImport() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("src/Lead.moog")
+        try FileManager.default.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #"{"name":"Mini Lead","patch":{"cutoffHz":2400}}"#.write(to: source, atomically: true, encoding: .utf8)
+        var catalog = SoundCatalog()
+        let entry = try catalog.importFile(at: source, libraryRoot: root.appendingPathComponent("Library"))
+        XCTAssertEqual(entry.category, .moog)
+        XCTAssertEqual(entry.name, "Mini Lead")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: entry.path))
+    }
+}
