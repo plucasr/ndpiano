@@ -1,4 +1,5 @@
 import SwiftUI
+import NordPianoCore
 import NordPianoEngine
 
 /// One mixer channel strip per channel, in channel order: volume fader, mute,
@@ -29,6 +30,7 @@ private struct ChannelStrip: View {
     @EnvironmentObject private var model: PlayerModel
     let channel: PlayerModel.ChannelState
     @State private var showFX = false
+    @State private var showBrowser = false
 
     private var entry: PlayerModel.PianoEntry { channel.entry }
     private var isMuted: Bool { model.muted.contains(entry.url) }
@@ -75,19 +77,35 @@ private struct ChannelStrip: View {
                 }
                 .frame(maxHeight: .infinity)
 
-                // FX button opens the full per-channel effects editor.
-                Button { showFX = true } label: {
-                    Text("FX")
-                        .font(NordFont.font(9, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 30, height: 20)
-                        .background(NordColor.red, in: RoundedRectangle(cornerRadius: 4))
-                }
-                .buttonStyle(.plain)
-                .help("Edit channel effects")
-                .popover(isPresented: $showFX, arrowEdge: .bottom) {
-                    ChannelFXPanel(channel: channel)
-                        .environmentObject(model)
+                // FX button opens the full per-channel effects editor; the
+                // browse button steps through the category's sounds in place.
+                VStack(spacing: 6) {
+                    Button { showFX = true } label: {
+                        Text("FX")
+                            .font(NordFont.font(9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 20)
+                            .background(NordColor.red, in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit channel effects")
+                    .popover(isPresented: $showFX, arrowEdge: .bottom) {
+                        ChannelFXPanel(channel: channel)
+                            .environmentObject(model)
+                    }
+                    Button { showBrowser = true } label: {
+                        Image(systemName: "rectangle.on.rectangle")
+                            .font(NordFont.font(10))
+                            .foregroundStyle(NordColor.text)
+                            .frame(width: 30, height: 18)
+                            .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Browse sounds in this category")
+                    .popover(isPresented: $showBrowser, arrowEdge: .bottom) {
+                        SoundBrowserPopover(channel: channel)
+                            .environmentObject(model)
+                    }
                 }
                 .frame(maxHeight: .infinity)
             }
@@ -103,6 +121,58 @@ private struct ChannelStrip: View {
         .contentShape(Rectangle())
         .onTapGesture { model.selectedChannelID = channel.id }
         .animation(.easeInOut(duration: 0.15), value: isMuted)
+    }
+}
+
+/// Channel sound browser: step through the catalog sounds of the channel's
+/// category without leaving the mixer ("< name >", wraps around). The swap is
+/// in place — same channel slot, gains/mute/FX follow the sound's URL as usual.
+private struct SoundBrowserPopover: View {
+    @EnvironmentObject private var model: PlayerModel
+    let channel: PlayerModel.ChannelState
+
+    private var context: (entries: [CatalogEntry], index: Int)? { model.browseContext(for: channel) }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text("BROWSE \(model.catalogEntry(for: channel.entry.url)?.category.rawValue.uppercased() ?? "SOUNDS")")
+                .font(NordFont.font(9, weight: .bold))
+                .foregroundStyle(NordColor.red)
+            HStack(spacing: 10) {
+                stepButton("chevron.left", delta: -1)
+                Text(channel.entry.name)
+                    .font(NordFont.font(11, weight: .semibold))
+                    .foregroundStyle(NordColor.text)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .frame(width: 160)
+                stepButton("chevron.right", delta: 1)
+            }
+            if let (list, index) = context {
+                Text("\(index + 1) / \(list.count)")
+                    .font(NordFont.font(8, weight: .medium))
+                    .foregroundStyle(NordColor.subtext)
+            } else {
+                Text("NOT IN CATALOG")
+                    .font(NordFont.font(8, weight: .medium))
+                    .foregroundStyle(NordColor.subtext)
+            }
+        }
+        .padding(12)
+        .background(NordColor.card)
+    }
+
+    private func stepButton(_ icon: String, delta: Int) -> some View {
+        Button { model.stepChannelSound(channel, delta: delta) } label: {
+            Image(systemName: icon)
+                .font(NordFont.font(11, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 22)
+                .background(NordColor.red, in: RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .disabled(context == nil)
+        .opacity(context == nil ? 0.4 : 1)
     }
 }
 

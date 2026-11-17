@@ -2,27 +2,34 @@ import SwiftUI
 import NordPianoCore
 
 /// Nord-Stage-style engine panel: header (count · size), the loaded-slot card,
-/// a display area, subcategory pills, and the catalog list for one engine.
+/// subcategory pills, and the catalog list for one engine.
 /// Click a row to highlight it (the "→" assign target); double-click to layer
-/// it right away; right-click for assign/recategorize.
+/// it right away; right-click for assign/recategorize/info.
 struct EnginePanelView: View {
     @EnvironmentObject private var model: PlayerModel
 
     let category: SoundCategory
-    /// Display title ("PIANO"), subcategory→icon-file map and fallback icon,
-    /// subcategory pills.
+    /// Display title ("PIANO") and subcategory pills.
     let title: String
-    let icons: [String: String]
-    let defaultIcon: String
     let subcategories: [(label: String, raw: String)]
 
     @State private var filter: String? // nil = ALL
+    /// Compact mode (header "+"): narrow panel, no version column. Default —
+    /// sample details live in the row's right-click Info… instead.
+    @State private var compact = true
+    /// Per-panel name search.
+    @State private var searchText = ""
 
     private var allEntries: [CatalogEntry] { model.catalog.entries(in: category) }
 
     private var entries: [CatalogEntry] {
-        guard let filter else { return allEntries }
-        return allEntries.filter { $0.subcategory == filter }
+        var result = allEntries
+        if let filter { result = result.filter { $0.subcategory == filter } }
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        if !query.isEmpty {
+            result = result.filter { $0.name.range(of: query, options: .caseInsensitive) != nil }
+        }
+        return result
     }
 
     private var loaded: PlayerModel.ChannelState? { model.loadedChannel(in: category) }
@@ -37,12 +44,13 @@ struct EnginePanelView: View {
         VStack(spacing: 0) {
             header
             loadedCard
-            displayArea
             pills
+            searchField
             list
         }
         .background(NordColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(width: compact ? 190 : 300)
     }
 
     private var header: some View {
@@ -52,9 +60,21 @@ struct EnginePanelView: View {
                 .font(NordFont.font(13, weight: .bold))
                 .foregroundStyle(NordColor.text)
             Spacer()
-            Text("\(allEntries.count) SAMPLES · \(totalSize)")
-                .font(NordFont.font(8, weight: .medium))
-                .foregroundStyle(NordColor.subtext)
+            if !compact {
+                Text("\(allEntries.count) SAMPLES · \(totalSize)")
+                    .font(NordFont.font(8, weight: .medium))
+                    .foregroundStyle(NordColor.subtext)
+            }
+            Button { withAnimation(.easeInOut(duration: 0.15)) { compact.toggle() } } label: {
+                Image(systemName: compact ? "plus" : "minus")
+                    .font(NordFont.font(11, weight: .bold))
+                    .foregroundStyle(NordColor.text)
+                    .frame(width: 28, height: 22)
+                    .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(compact ? "Expand panel (show versions, wider)" : "Compact panel (hide versions, narrower)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
@@ -96,58 +116,78 @@ struct EnginePanelView: View {
         .padding(.horizontal, 10)
     }
 
-    /// The line-art icon follows what you're about to assign (highlighted row),
-    /// then what's loaded in a channel, then the panel's default.
-    private var currentIcon: String {
-        if let highlighted = model.highlighted,
-           let entry = model.catalogEntry(for: highlighted.url),
-           entry.category == category,
-           let sub = entry.subcategory, let icon = icons[sub] {
-            return icon
-        }
-        if let loaded,
-           let entry = model.catalogEntry(for: loaded.entry.url),
-           let sub = entry.subcategory, let icon = icons[sub] {
-            return icon
-        }
-        return defaultIcon
-    }
-
-    private var displayArea: some View {
-        Group {
-            if let image = EnginePanelView.loadIcon(currentIcon) {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .padding(10)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 100)
-        .background(NordColor.background)
-        .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .animation(.easeInOut(duration: 0.15), value: currentIcon)
-    }
-
-    /// Icon from the app bundle; falls back to the source tree in dev builds.
-    private static func loadIcon(_ name: String) -> NSImage? {
-        if let url = Bundle.main.url(forResource: name, withExtension: nil),
-           let image = NSImage(contentsOf: url) { return image }
-        let dev = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().appendingPathComponent("Icons/\(name)")
-        return NSImage(contentsOf: dev)
-    }
-
     private var pills: some View {
-        HStack(spacing: 6) {
+        WrapLayout(spacing: 6) {
             pill("ALL", active: filter == nil) { filter = nil }
             ForEach(subcategories, id: \.raw) { sub in
                 pill(sub.label, active: filter == sub.raw) { filter = sub.raw }
             }
-            Spacer()
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
+    }
+
+    /// Name filter: matches anywhere in the sound name, case-insensitive.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(NordFont.font(9))
+                .foregroundStyle(NordColor.subtext)
+            TextField("Search \(title.lowercased())…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(NordFont.font(10))
+                .foregroundStyle(NordColor.text)
+            if !searchText.isEmpty {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(NordFont.font(9))
+                        .foregroundStyle(NordColor.subtext)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(NordColor.background)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+
+    /// Small badge marking open-format (non-Nord) sounds, e.g. "SFZ".
+    private func formatBadge(for entry: CatalogEntry) -> some View {
+        let ext = URL(fileURLWithPath: entry.path).pathExtension.lowercased()
+        let isNord = ["npno", "nsmp3", "nsmp4"].contains(ext)
+        return Group {
+            if !isNord {
+                Text(ext.uppercased())
+                    .font(NordFont.font(7, weight: .bold))
+                    .foregroundStyle(NordColor.red)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(NordColor.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+            }
+        }
+    }
+
+    /// Sample details on demand (right-click → Info…), replacing the always-on
+    /// display area: name, category/type, version, format, size and file path.
+    private func showInfo(for entry: CatalogEntry) {
+        let url = URL(fileURLWithPath: entry.path)
+        let size = ByteCountFormatter.string(fromByteCount: entry.sizeBytes, countStyle: .file)
+        let alert = NSAlert()
+        alert.messageText = entry.name
+        alert.informativeText = """
+            Category: \(entry.category.rawValue.capitalized)
+            Type: \(entry.subcategory?.capitalized ?? "—")
+            Version: v\(entry.version)
+            Format: \(url.pathExtension.uppercased())
+            Size: \(size)
+            File: \(entry.path)
+            """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     private func pill(_ title: String, active: Bool, action: @escaping () -> Void) -> some View {
@@ -190,10 +230,13 @@ struct EnginePanelView: View {
                 .font(NordFont.font(11, weight: isLoaded ? .semibold : .regular))
                 .foregroundStyle(isHighlighted || isLoaded ? NordColor.text : NordColor.subtext)
                 .lineLimit(1)
+            formatBadge(for: entry)
             Spacer()
-            Text("\(entry.subcategory?.uppercased() ?? "—")  v\(entry.version)")
-                .font(NordFont.font(8, weight: .medium))
-                .foregroundStyle(NordColor.subtext.opacity(0.8))
+            if !compact {
+                Text("\(entry.subcategory?.uppercased() ?? "—")  v\(entry.version)")
+                    .font(NordFont.font(8, weight: .medium))
+                    .foregroundStyle(NordColor.subtext.opacity(0.8))
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
@@ -202,6 +245,8 @@ struct EnginePanelView: View {
         .onTapGesture(count: 2) { model.select(pianoEntry) }
         .onTapGesture { model.highlighted = pianoEntry }
         .contextMenu {
+            Button("Info…") { showInfo(for: entry) }
+            Divider()
             Button("Assign to Selected Channel") { model.assignToChannel(pianoEntry) }
             Divider()
             Menu("Move to…") {
@@ -230,11 +275,54 @@ struct EnginePanelView: View {
     }
 }
 
+/// Horizontal flow layout: lays subviews left-to-right, wrapping to a new row
+/// when the next one would overflow the proposed width (the subcategory pills).
+private struct WrapLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0
+        var height: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                height += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: width, height: height + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for view in subviews {
+            let size = view.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
 /// Left column: numbered scene slots + the master fader, like the panel mock.
 struct ScenesColumnView: View {
     @EnvironmentObject private var model: PlayerModel
     var onSave: () -> Void
     var onRename: (PlayerModel.Scene) -> Void
+    /// Wide mode (header ↔ button): more room for scene names, 3 columns.
+    @State private var wide = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -249,13 +337,23 @@ struct ScenesColumnView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(NordColor.red)
                 .help("Save the current setup (channels, mixer, FX) as a scene")
+                Button { withAnimation(.easeInOut(duration: 0.15)) { wide.toggle() } } label: {
+                    Image(systemName: "arrow.left.and.right")
+                        .font(NordFont.font(11, weight: .bold))
+                        .foregroundStyle(NordColor.text)
+                        .frame(width: 28, height: 22)
+                        .background(Color.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 4))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(wide ? "Narrow the scenes column" : "Widen the scenes column")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
 
             ScrollView {
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                    ForEach(Array(model.scenes.enumerated()), id: \.element.id) { index, scene in
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: wide ? 3 : 2), spacing: 8) {
+                    ForEach(Array(model.userScenes.enumerated()), id: \.element.id) { index, scene in
                         sceneSlot(scene, number: index + 1)
                     }
                 }
@@ -273,7 +371,7 @@ struct ScenesColumnView: View {
             }
             .padding(.vertical, 8)
         }
-        .frame(width: 190)
+        .frame(width: wide ? 300 : 190)
         .background(NordColor.card)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }

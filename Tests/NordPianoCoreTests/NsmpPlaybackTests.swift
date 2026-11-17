@@ -40,7 +40,7 @@ final class NsmpPlaybackTests: XCTestCase {
     func testEngineSampleLayer() throws {
         let bytes = try loadFixture()
         let id = UUID()
-        let player = PianoPlayer()
+        let player = PianoPlayer(midiInput: false)
         try player.addSampleLayer(bytes: bytes, id: id)
         XCTAssertEqual(player.layerIDs, [id])
         // Markers are the zone root keys, absolute (no piano +4 offset).

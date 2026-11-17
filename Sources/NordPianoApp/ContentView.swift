@@ -7,6 +7,10 @@ struct ContentView: View {
     @State private var isDropTarget = false
     /// Perform page: large scene tiles replace the mixer/keyboard for live use.
     @State private var performMode = false
+    /// Collections page: bundle folders with their scenes (fullscreen).
+    @State private var showCollections = false
+    /// The collection folder currently open on the collections page (nil = root).
+    @State private var openCollection: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +27,7 @@ struct ContentView: View {
         } isTargeted: { isDropTarget = $0 }
         .overlay(isDropTarget ? NordColor.red.opacity(0.15).ignoresSafeArea() : nil)
         .overlay { if namePrompt != nil { namePromptOverlay } }
+        .overlay { if !importCandidates.isEmpty { importReviewOverlay } }
         .onOpenURL { model.load(url: $0) }
         .onAppear {
             // Open a file passed on the command line (e.g. `open -a NordPiano file.npno`).
@@ -42,6 +47,175 @@ struct ContentView: View {
         let title: String
         let initial: String
         let action: (String) -> Void
+    }
+
+    /// One row of the import review sheet: a file plus the (editable) category
+    /// and subcategory it will be imported as.
+    struct ImportCandidate: Identifiable {
+        let id = UUID()
+        let url: URL
+        let name: String
+        var category: SoundCategory
+        var subcategory: String?
+    }
+    /// Pending import review (non-empty = sheet is up).
+    @State private var importCandidates: [ImportCandidate] = []
+
+    /// Import files into the categorized catalog: classify first, then confirm
+    /// or fix each file's category in the review sheet before anything imports.
+    private func importFiles() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = supportedTypes
+        panel.allowsMultipleSelection = true
+        panel.message = "Import sounds into the library (you'll review the categories before importing)"
+        guard panel.runModal() == .OK else { return }
+        let urls = panel.urls
+        // Sound bank bundles import directly (samples + scenes); no review sheet.
+        for url in urls where model.isBundle(url) {
+            model.importBundle(url: url)
+        }
+        importCandidates = urls.filter { !model.isBundle($0) }.compactMap { url in
+            model.proposedClassification(for: url).map {
+                ImportCandidate(url: url, name: $0.name, category: $0.category, subcategory: $0.subcategory)
+            }
+        }
+    }
+
+    private func commitImport() {
+        let overrides = Dictionary(uniqueKeysWithValues: importCandidates.map {
+            ($0.url, ($0.category, $0.subcategory))
+        })
+        model.importSounds(importCandidates.map(\.url), overrides: overrides)
+        importCandidates = []
+    }
+
+    /// Possible-duplicate hint for a review row: the same normalized name
+    /// (importer's " 2"-style suffixes stripped) already exists in the catalog
+    /// at a different path, or appears twice in this import batch.
+    private func duplicateHint(for candidate: ImportCandidate) -> String? {
+        let name = normalizedName(candidate.url)
+        if let hit = model.catalog.entries.first(where: {
+            $0.path != candidate.url.path
+                && normalizedName(URL(fileURLWithPath: $0.path)) == name
+        }) {
+            return "Already in the library: \(hit.name)"
+        }
+        if let hit = importCandidates.first(where: {
+            $0.id != candidate.id && normalizedName($0.url) == name
+        }) {
+            return "Also in this import: \(hit.name)"
+        }
+        return nil
+    }
+
+    private func normalizedName(_ url: URL) -> String {
+        var s = url.deletingPathExtension().lastPathComponent.lowercased()
+        while let range = s.range(of: #"\s+\d+$"#, options: .regularExpression) {
+            s.removeSubrange(range)
+        }
+        return s.replacingOccurrences(of: "  ", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Import review sheet: every picked file with its proposed category, both
+    /// editable. Import commits them all; Cancel drops the batch.
+    private var importReviewOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+                .onTapGesture { importCandidates = [] }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(NordColor.red)
+                        .frame(width: 6, height: 16)
+                    Text("IMPORT \(importCandidates.count) SOUND\(importCandidates.count == 1 ? "" : "S")")
+                        .font(NordFont.font(13, weight: .bold))
+                        .foregroundStyle(NordColor.text)
+                }
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach($importCandidates) { $candidate in
+                            importReviewRow(candidate: $candidate)
+                            Divider().overlay(Color.white.opacity(0.05))
+                        }
+                    }
+                }
+                .frame(maxHeight: 320)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { importCandidates = [] }
+                        .buttonStyle(.bordered)
+                        .tint(.gray)
+                    Button("Import") { commitImport() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(NordColor.red)
+                        .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(16)
+            .frame(width: 520)
+            .background(NordColor.card)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10)
+                .stroke(NordColor.red.opacity(0.35), lineWidth: 1))
+            .shadow(radius: 20)
+            .onExitCommand { importCandidates = [] }
+        }
+    }
+
+    /// Subcategory options for the picked category (nil = no sub-navigation).
+    private func subcategoryOptions(for category: SoundCategory) -> [(label: String, raw: String)] {
+        switch category {
+        case .piano: PianoSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) }
+        case .organ: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) }
+        case .synth: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) }
+        case .orchestral: OrchestralSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) }
+        case .other: []
+        }
+    }
+
+    private func importReviewRow(candidate: Binding<ImportCandidate>) -> some View {
+        HStack(spacing: 10) {
+            Text(candidate.wrappedValue.name)
+                .font(NordFont.font(11, weight: .medium))
+                .foregroundStyle(NordColor.text)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let hint = duplicateHint(for: candidate.wrappedValue) {
+                Text("DUP?")
+                    .font(NordFont.font(7, weight: .bold))
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                    .help(hint)
+            }
+            Menu(candidate.wrappedValue.category.rawValue.uppercased()) {
+                ForEach(SoundCategory.allCases, id: \.self) { cat in
+                    Button(cat.rawValue.capitalized) {
+                        candidate.wrappedValue.category = cat
+                        // Re-default the subcategory: the old one may not exist
+                        // under the new category.
+                        candidate.wrappedValue.subcategory = nil
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 110, alignment: .leading)
+            let options = subcategoryOptions(for: candidate.wrappedValue.category)
+            Menu(candidate.wrappedValue.subcategory?.uppercased() ?? "—") {
+                Button("—") { candidate.wrappedValue.subcategory = nil }
+                ForEach(options, id: \.raw) { option in
+                    Button(option.label.capitalized) { candidate.wrappedValue.subcategory = option.raw }
+                }
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 110, alignment: .leading)
+            .disabled(options.isEmpty)
+        }
+        .padding(.vertical, 6)
     }
 
     /// Map a section title ("Root / subfolder") back to its library root URL.
@@ -199,16 +373,16 @@ struct ContentView: View {
                 Image(systemName: "chevron.left").font(.caption)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(model.scenes.isEmpty ? NordColor.subtext.opacity(0.4) : NordColor.red)
-            .disabled(model.scenes.isEmpty)
+            .foregroundStyle(model.userScenes.isEmpty ? NordColor.subtext.opacity(0.4) : NordColor.red)
+            .disabled(model.userScenes.isEmpty)
 
             if let index = model.activeSceneIndex {
-                Text("SCENE \(index + 1) · \(model.scenes[index].name)")
+                Text("SCENE \(index + 1) · \(model.userScenes[index].name)")
                     .font(NordFont.font(11, weight: .bold))
                     .foregroundStyle(NordColor.red)
                     .lineLimit(1)
             } else {
-                Text(model.scenes.isEmpty ? "NO SCENES" : "NO SCENE ACTIVE")
+                Text(model.userScenes.isEmpty ? "NO SCENES" : "NO SCENE ACTIVE")
                     .font(NordFont.font(11, weight: .medium))
                     .foregroundStyle(NordColor.subtext)
             }
@@ -217,12 +391,12 @@ struct ContentView: View {
                 Image(systemName: "chevron.right").font(.caption)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(model.scenes.isEmpty ? NordColor.subtext.opacity(0.4) : NordColor.red)
-            .disabled(model.scenes.isEmpty)
+            .foregroundStyle(model.userScenes.isEmpty ? NordColor.subtext.opacity(0.4) : NordColor.red)
+            .disabled(model.userScenes.isEmpty)
 
             Button("SAVE") {
                 if let index = model.activeSceneIndex {
-                    model.updateScene(model.scenes[index])
+                    model.updateScene(model.userScenes[index])
                 } else {
                     saveScene()
                 }
@@ -246,13 +420,12 @@ struct ContentView: View {
         if panel.runModal() == .OK, let url = panel.url { model.addFolder(url) }
     }
 
-    /// Import files into the categorized catalog (copied into the managed library).
-    private func importFiles() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = ["npno", "nsmp3", "nsmp4"].compactMap { UTType(filenameExtension: $0) }
-        panel.allowsMultipleSelection = true
-        panel.message = "Import sounds into the library (categorized by name — fix later via right-click)"
-        if panel.runModal() == .OK { model.importSounds(panel.urls) }
+    /// UTTypes for the file pickers. Unknown extensions ("sfz") get a dynamic
+    /// type via the conformingTo: fallback.
+    private var supportedTypes: [UTType] {
+        ["npno", "nsmp3", "nsmp4", "sfz", "sf2", "nw2pbundle", "ne6pbundle", "ns4pbundle"].compactMap {
+            UTType(filenameExtension: $0) ?? UTType(filenameExtension: $0, conformingTo: .data)
+        }
     }
 
     private var filesList: some View {
@@ -324,22 +497,25 @@ struct ContentView: View {
                 .disabled(model.highlighted == nil)
                 .help("Assign the highlighted sound to the selected mixer channel (or a new channel)")
                 Spacer()
+                collectionsToggle
                 performToggle
                 keyboardToggle
                 devicesMenu
                 recordButton
                 Button("Open…") {
                     let panel = NSOpenPanel()
-                    panel.allowedContentTypes = ["npno", "nsmp3", "nsmp4"].compactMap { UTType(filenameExtension: $0) }
+                    panel.allowedContentTypes = supportedTypes
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url { model.load(url: url) }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(NordColor.red)
-                .help("Play a .npno / .nsmp3 / .nsmp4 file once, without adding it to the library")
+                .help("Play a .npno / .nsmp3 / .nsmp4 / .sfz file once, without adding it to the library")
             }
             if model.isRecording || model.lastTake != nil { takeBar }
-            if performMode {
+            if showCollections {
+                collectionsView
+            } else if performMode {
                 performView
             } else if showFiles {
                 filesList
@@ -360,23 +536,24 @@ struct ContentView: View {
         .padding(16)
     }
 
-    /// Full-width top section: scenes column + the three engine panels.
+    /// Full-width top section: scenes column + the engine panels. More panels
+    /// than fit scroll horizontally (fixed panel width keeps lists readable).
     private var enginesSection: some View {
         HStack(spacing: 12) {
             ScenesColumnView(onSave: saveScene, onRename: renameScene)
-            EnginePanelView(category: .piano, title: "PIANO",
-                            icons: ["grand": "piano-grand.png", "upright": "piano-upright.png",
-                                    "ep": "piano-ep.png"],
-                            defaultIcon: "piano-grand.png",
-                            subcategories: PianoSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
-            EnginePanelView(category: .organ, title: "ORGAN",
-                            icons: ["b3": "organ-electric.png", "farfisa": "organ-electric.png",
-                                    "pipe": "organ-pipe.png"],
-                            defaultIcon: "organ-electric.png",
-                            subcategories: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
-            EnginePanelView(category: .synth, title: "SYNTH",
-                            icons: [:], defaultIcon: "synth.png",
-                            subcategories: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+            ScrollView(.horizontal, showsIndicators: true) {
+                HStack(spacing: 12) {
+                    EnginePanelView(category: .piano, title: "PIANO",
+                                    subcategories: PianoSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+                    EnginePanelView(category: .organ, title: "ORGAN",
+                                    subcategories: OrganSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+                    EnginePanelView(category: .synth, title: "SYNTH",
+                                    subcategories: SynthSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+                    EnginePanelView(category: .orchestral, title: "ORCHESTRAL",
+                                    subcategories: OrchestralSubcategory.allCases.map { ($0.rawValue.uppercased(), $0.rawValue) })
+                }
+                .frame(maxHeight: .infinity)
+            }
         }
         .frame(minHeight: 320)
         .frame(maxHeight: .infinity)
@@ -392,6 +569,116 @@ struct ContentView: View {
         .help(showFiles ? "Back to the engine panels" : "Browse the folder-scanned library")
     }
 
+    /// Collections page toggle: bundle folders with their scenes.
+    private var collectionsToggle: some View {
+        Toggle(isOn: Binding(
+            get: { showCollections },
+            set: { newValue in
+                showCollections = newValue
+                if !newValue { openCollection = nil }
+            }
+        )) {
+            Image(systemName: "music.note.house")
+        }
+        .toggleStyle(PillToggleStyle(onColor: NordColor.red))
+        .help(showCollections ? "Back to the mixer" : "Collections — imported sound banks")
+    }
+
+    /// Collections fullscreen: folders per imported bundle; opening one shows
+    /// its scenes as tiles (click to play, right-click to remove the scene).
+    private var collectionsView: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                if let open = openCollection {
+                    Button { openCollection = nil } label: {
+                        Image(systemName: "chevron.left").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(NordColor.red)
+                    Text(open)
+                        .font(NordFont.font(13, weight: .bold))
+                        .foregroundStyle(NordColor.text)
+                } else {
+                    Text("COLLECTIONS")
+                        .font(NordFont.font(13, weight: .bold))
+                        .foregroundStyle(NordColor.text)
+                }
+                Spacer()
+                if let open = openCollection {
+                    Button(role: .destructive) { model.deleteCollection(open); openCollection = nil } label: {
+                        Image(systemName: "trash").font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(NordColor.subtext)
+                    .help("Remove this collection (its scenes; the sounds stay in the library)")
+                }
+            }
+            .padding(.horizontal, 4)
+            if let open = openCollection,
+               let collection = model.collections.first(where: { $0.name == open }) {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 14)], spacing: 14) {
+                        ForEach(collection.scenes) { scene in
+                            sceneTile(scene)
+                        }
+                    }
+                    .padding(4)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if model.collections.isEmpty {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Text("No collections yet")
+                        .font(.callout).foregroundStyle(NordColor.text)
+                    Text("Import a .nw2pbundle / .ne6pbundle / .ns4pbundle — its programs land here as a folder of scenes.")
+                        .font(.caption).foregroundStyle(NordColor.subtext)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 14)], spacing: 14) {
+                        ForEach(model.collections, id: \.name) { collection in
+                            collectionFolderTile(collection)
+                        }
+                    }
+                    .padding(4)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// A collection folder tile: bundle name + scene count; opens the folder.
+    private func collectionFolderTile(_ collection: (name: String, scenes: [PlayerModel.Scene])) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Image(systemName: "music.note.house")
+                .font(NordFont.font(20, weight: .semibold))
+                .foregroundStyle(NordColor.red)
+            Spacer()
+            Text(collection.name)
+                .font(NordFont.font(15, weight: .bold))
+                .foregroundStyle(NordColor.text)
+                .lineLimit(2)
+            Text("\(collection.scenes.count) scene\(collection.scenes.count == 1 ? "" : "s")")
+                .font(NordFont.font(10, weight: .medium))
+                .foregroundStyle(NordColor.subtext)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 110, alignment: .leading)
+        .background(NordColor.card)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10)
+            .stroke(NordColor.red.opacity(0.25), lineWidth: 1))
+        .contentShape(Rectangle())
+        .onTapGesture { openCollection = collection.name }
+        .contextMenu {
+            Button("Delete Collection", role: .destructive) { model.deleteCollection(collection.name) }
+        }
+    }
+
     /// Switch between the edit view (mixer/keyboard) and the perform page.
     private var performToggle: some View {
         Toggle(isOn: $performMode) {
@@ -403,26 +690,32 @@ struct ContentView: View {
 
     /// Perform page: a grid of large scene tiles, numbered setlist-style, plus a
     /// save tile for capturing the current setup. The recalled scene stays lit.
+    /// The mixer row stays at the bottom for live channel control.
     private var performView: some View {
-        ScrollView {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 14)], spacing: 14) {
-                ForEach(Array(model.scenes.enumerated()), id: \.element.id) { index, scene in
-                    sceneTile(scene, number: index + 1)
+        VStack(spacing: 12) {
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 280), spacing: 14)], spacing: 14) {
+                    ForEach(Array(model.userScenes.enumerated()), id: \.element.id) { index, scene in
+                        sceneTile(scene, number: index + 1)
+                    }
+                    saveTile
                 }
-                saveTile
+                .padding(4)
             }
-            .padding(4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            MixerView()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func sceneTile(_ scene: PlayerModel.Scene, number: Int) -> some View {
+    private func sceneTile(_ scene: PlayerModel.Scene, number: Int? = nil) -> some View {
         let isActive = model.activeSceneID == scene.id
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(String(format: "%02d", number))
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    .foregroundStyle(isActive ? NordColor.red : NordColor.subtext)
+                if let number {
+                    Text(String(format: "%02d", number))
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(isActive ? NordColor.red : NordColor.subtext)
+                }
                 Spacer()
                 if isActive {
                     Circle().fill(NordColor.red).frame(width: 8, height: 8)
@@ -699,6 +992,13 @@ struct ContentView: View {
             Circle().fill(model.player == nil ? Color.gray : Color.green).frame(width: 7, height: 7)
             Text(model.status).font(.caption).foregroundStyle(NordColor.subtext)
             Spacer()
+            // Last MIDI message received (any kind — notes, CC, program change…).
+            if !model.midiActivity.isEmpty {
+                Text(model.midiActivity)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(NordColor.red)
+                    .lineLimit(1)
+            }
             // Current devices, so the selection is visible without opening the menu.
             HStack(spacing: 12) {
                 Label(model.audioDevices.first(where: { $0.id == model.audioDeviceID })?.name ?? "System Default",

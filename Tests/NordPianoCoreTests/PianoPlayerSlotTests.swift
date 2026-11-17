@@ -20,14 +20,14 @@ final class PianoPlayerSlotTests: XCTestCase {
     }
 
     func testAddLayerRegistersSlotID() throws {
-        let player = PianoPlayer()
+        let player = PianoPlayer(midiInput: false)
         let id = UUID()
         try player.addLayer(bytes: pianoBytes, id: id)
         XCTAssertEqual(player.layerIDs, [id])
     }
 
     func testLayerOrderFollowsInsertion() throws {
-        let player = PianoPlayer()
+        let player = PianoPlayer(midiInput: false)
         let a, b, c: UUID
         (a, b, c) = (UUID(), UUID(), UUID())
         try player.addLayer(bytes: pianoBytes, id: a)
@@ -37,7 +37,7 @@ final class PianoPlayerSlotTests: XCTestCase {
     }
 
     func testRemoveLayerKeepsOrderOfRest() throws {
-        let player = PianoPlayer()
+        let player = PianoPlayer(midiInput: false)
         let (a, b) = (UUID(), UUID())
         try player.addLayer(bytes: pianoBytes, id: a)
         try player.addSampleLayer(bytes: sampleBytes, id: b)
@@ -50,7 +50,7 @@ final class PianoPlayerSlotTests: XCTestCase {
     /// Channel sound replacement: remove the slot's layer, re-add under the
     /// SAME id — the engine must accept it (this is assignToChannel's flow).
     func testReplaceSoundUnderSameSlotID() throws {
-        let player = PianoPlayer()
+        let player = PianoPlayer(midiInput: false)
         let slot = UUID()
         try player.addLayer(bytes: pianoBytes, id: slot)
         player.removeLayer(id: slot)
@@ -59,7 +59,7 @@ final class PianoPlayerSlotTests: XCTestCase {
     }
 
     func testGainMuteFXBySlotID() throws {
-        let player = PianoPlayer()
+        let player = PianoPlayer(midiInput: false)
         let id = UUID()
         try player.addLayer(bytes: pianoBytes, id: id)
         player.setLayerGain(0.5, id: id)
@@ -73,7 +73,7 @@ final class PianoPlayerSlotTests: XCTestCase {
     }
 
     func testMarkersFromBothSourceKinds() throws {
-        let player = PianoPlayer()
+        let player = PianoPlayer(midiInput: false)
         try player.addLayer(bytes: pianoBytes, id: UUID())
         let pianoMarkers = player.markers
         XCTAssertFalse(pianoMarkers.isEmpty)
@@ -100,7 +100,9 @@ final class LayerFXCodableTests: XCTestCase {
         XCTAssertFalse(fx.monoOn)
         XCTAssertEqual(fx.glideNorm, 0)
         XCTAssertEqual(fx.lfoDepth, 0)
-        XCTAssertEqual(fx.lfoRate, 0.3)
+        XCTAssertEqual(fx.lfoRate, PianoPlayer.LayerFX().lfoRate) // absent key: plain default
+        // Old filter knob 0.5 (200·90^0.5 ≈ 1.9 kHz) keeps its frequency.
+        XCTAssertEqual(SynthCurves.cutoffHz(fx.filterNorm), 200 * pow(90, 0.5), accuracy: 1)
     }
 
     func testRoundTripKeepsSynthFields() throws {

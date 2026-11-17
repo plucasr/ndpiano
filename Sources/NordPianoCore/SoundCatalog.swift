@@ -2,22 +2,28 @@ import Foundation
 
 /// Engine box a sound belongs to (the Nord Stage panel sections).
 public enum SoundCategory: String, Codable, CaseIterable {
-    case piano, organ, synth, other
+    case piano, organ, synth, orchestral, other
 }
 
-/// Sub-navigation inside the Piano engine (GRAND / UPRIGHT / EP buttons).
+/// Sub-navigation inside the Piano engine (GRAND / UPRIGHT / EP / CLAV buttons).
 public enum PianoSubcategory: String, Codable, CaseIterable {
-    case grand, upright, ep
+    case grand, upright, ep, clav
 }
 
-/// Sub-navigation inside the Organ engine (B3 / FARF / PIPE).
+/// Sub-navigation inside the Organ engine (B3 / HAMMOND / FARF / PIPE).
 public enum OrganSubcategory: String, Codable, CaseIterable {
-    case b3, farfisa, pipe
+    case b3, hammond, farfisa, pipe
 }
 
-/// Sub-navigation inside the Synth engine (SUB / PAD / LEAD).
+/// Sub-navigation inside the Synth engine (BASS / PAD / LEAD / STRINGS / ARP / FX).
 public enum SynthSubcategory: String, Codable, CaseIterable {
-    case sub, pad, lead
+    case bass, pad, lead, strings, arp, fx
+}
+
+/// Sub-navigation inside the Orchestral engine (STRINGS / BRASS / WOODWINDS /
+/// MALLETS / CHOIR) — the Nord Sample Library's acoustic sections.
+public enum OrchestralSubcategory: String, Codable, CaseIterable {
+    case strings, brass, woodwinds, mallets, choir
 }
 
 /// One imported sound: identity comes from the file header at import time, the
@@ -52,6 +58,7 @@ public struct CatalogEntry: Identifiable, Codable, Equatable {
     public var pianoSubcategory: PianoSubcategory? { subcategory.flatMap(PianoSubcategory.init) }
     public var organSubcategory: OrganSubcategory? { subcategory.flatMap(OrganSubcategory.init) }
     public var synthSubcategory: SynthSubcategory? { subcategory.flatMap(SynthSubcategory.init) }
+    public var orchestralSubcategory: OrchestralSubcategory? { subcategory.flatMap(OrchestralSubcategory.init) }
 }
 
 /// Name-based classification. Neither file format carries an instrument-type
@@ -63,27 +70,39 @@ public enum SoundClassifier {
     /// Piano subcategory from a sound name; nil = unknown (user picks).
     public static func pianoSubcategory(name: String) -> PianoSubcategory? {
         let n = name.lowercased()
-        // EPs first: an "EP Grand" name shouldn't land in grand.
-        if n.range(of: #"\bep\d"#, options: .regularExpression) != nil
+        // Clav/harpsichord first: "Clavinet D6" also matches the EP keywords.
+        if n.contains("clavinet") || n.range(of: #"\bclav\b"#, options: .regularExpression) != nil
+            || n.contains("harpsi") || n.contains("cembalo") || n.contains("d6") {
+            return .clav
+        }
+        if n.range(of: #"\bep\d"#, options: .regularExpression) != nil || n.contains("epiano")
             || n.contains("rhodes") || n.contains("wurlitzer") || n.contains("wurli")
-            || n.contains("clavinet") || n.range(of: #"\bclav\b"#, options: .regularExpression) != nil
             || n.range(of: #"\bdx\d"#, options: .regularExpression) != nil || n.contains("cp80") || n.contains("cp-80") {
             return .ep
         }
-        if n.contains("upright") { return .upright }
+        if n.contains("upright") || n.contains("honktonk") || n.contains("honky") { return .upright }
         if n.contains("grand") || n.contains("imperial") || n.contains("concert")
-            || n.contains("steinway") || n.contains("bechstein")
+            || n.contains("steinway") || n.contains("bechstein") || n.contains("acoustic piano")
             || n.range(of: #"\bcfx\b"#, options: .regularExpression) != nil || n.contains("bösendorfer") || n.contains("bosendorfer") {
             return .grand
         }
+        // Anything else self-describing as a piano (Toy Piano, RainPiano, M1 piano…).
+        if n.contains("piano") { return .grand }
         return nil
     }
 
     /// Organ subcategory from a sound name; nil = unknown.
     public static func organSubcategory(name: String) -> OrganSubcategory? {
         let n = name.lowercased()
+        // Hammond-named sets (HamOrg, drawbar/tone programs) before the B3
+        // pattern: a "Hammond B3" name should land in hammond.
+        if n.contains("hammond") || n.contains("hamorg") || n.contains("tonewheel")
+            || n.contains("tone wheel") || n.contains("drawbar") {
+            return .hammond
+        }
         if n.contains("pipe") || n.contains("principal") || n.contains("cathedral")
-            || n.contains("church") || n.contains("gamba") {
+            || n.contains("church") || n.contains("gamba") || n.contains("organ flute")
+            || n.contains("flojt") {
             return .pipe
         }
         if n.contains("farfisa") || n.contains("vox") || n.contains("continental")
@@ -91,7 +110,6 @@ public enum SoundClassifier {
             return .farfisa
         }
         if n.range(of: #"\bb-?3\b"#, options: .regularExpression) != nil
-            || n.contains("hammond") || n.contains("tonewheel")
             || n.range(of: #"\bc-?3\b"#, options: .regularExpression) != nil
             || n.range(of: #"\ba-?100\b"#, options: .regularExpression) != nil {
             return .b3
@@ -102,26 +120,101 @@ public enum SoundClassifier {
     /// Synth subcategory from a sound name; nil = unknown.
     public static func synthSubcategory(name: String) -> SynthSubcategory? {
         let n = name.lowercased()
-        if n.contains("sub") || n.contains("bass") { return .sub }
-        if n.contains("pad") || n.contains("string") || n.contains("ambient")
-            || n.contains("crystal") { return .pad }
+        if n.contains("bass") || n.range(of: #"\bsub\b"#, options: .regularExpression) != nil { return .bass }
+        if n.contains("arp") || n.range(of: #"\bseq"#, options: .regularExpression) != nil { return .arp }
+        if n.contains("pad") || n.contains("ambient") || n.contains("crystal")
+            || n.contains("drone") || n.contains("atmo")
+            || n.contains("choir") || n.contains("vocal") || n.range(of: #"\baah\b"#, options: .regularExpression) != nil {
+            return .pad
+        }
+        // String-machine naming: "Eminent 310 Str L 8", "AnaStrings", "Symphony".
+        if n.contains("string") || n.contains("strung")
+            || n.range(of: #"\bstr"#, options: .regularExpression) != nil
+            || n.contains("symphony") || n.contains("rhapsod")
+            || n.contains("combi") || n.contains("trident") || n.contains("lambda")
+            || n.contains("violin") || n.contains("viola") || n.contains("cello") {
+            return .strings
+        }
+        if n.contains("fx") || n.contains("sweep") || n.contains("riser")
+            || n.contains("noise") || n.contains("effect") {
+            return .fx
+        }
         if n.contains("lead") || n.contains("solo") { return .lead }
         return nil
     }
 
-    /// Category from extension + name + the folder the file was imported from
-    /// (folder names like "Organ" or "Synths" are a strong hint for samples).
+    /// Orchestral subcategory from a sound name; nil = unknown.
+    public static func orchestralSubcategory(name: String) -> OrchestralSubcategory? {
+        let n = name.lowercased()
+        if n.contains("marimba") || n.contains("vibra") || n.contains("vibes") || n.contains("glocken")
+            || n.contains("xylophone") || n.contains("celest") || n.contains("kalimba")
+            || n.contains("bells") || n.contains("steel drum") || n.contains("tubular")
+            || n.contains("crotales") || n.contains("mbira") || n.contains("metallophone")
+            || n.contains("chimes") || n.contains("gong") || n.contains("himalayan")
+            || n.contains("belltower") {
+            return .mallets
+        }
+        if n.contains("choir") || n.contains("vocal") || n.range(of: #"\bvoice"#, options: .regularExpression) != nil
+            || n.range(of: #"\baah\b"#, options: .regularExpression) != nil || n.range(of: #"\booh\b"#, options: .regularExpression) != nil {
+            return .choir
+        }
+        // Woodwinds before brass: an "English Horn" is a woodwind.
+        if n.contains("english horn") || n.contains("flute") || n.contains("clarinet")
+            || n.contains("oboe") || n.contains("bassoon") || n.contains("sax")
+            || n.contains("woodwind") || n.contains("recorder") || n.contains("piccolo")
+            || n.contains("wind") || n.contains("bagpipe") || n.contains("panpipe")
+            || n.contains("whistle") || n.contains("bansuri") || n.contains("shakuhachi")
+            || n.contains("suona") || n.contains("shehnai") {
+            return .woodwinds
+        }
+        if n.contains("brass") || n.contains("trumpet") || n.contains("trombone")
+            || n.contains("tuba") || n.range(of: #"\bhorn"#, options: .regularExpression) != nil
+            || n.contains("alphorn") || n.contains("cornet") || n.contains("flugel")
+            || n.contains("supreme") || n.contains("big band") {
+            return .brass
+        }
+        if n.contains("string") || n.contains("viol") || n.contains("cell")
+            || n.contains("contrabass") || n.contains("basses") || n.contains("orchestra")
+            || n.contains("chamber") || n.contains("ensemble") || n.contains("pizzicato")
+            || n.contains("symphstr") || n.contains("swingstr") || n.contains("strquint")
+            || n.contains("harpa") || n.contains("nyckel") {
+            return .strings
+        }
+        return nil
+    }
+
+    /// Category from extension + name + the folder the file was imported from.
+    /// Folder names are the strongest hint: Nord distributes its samples in
+    /// folders like "Strings - Nord Wave 2" or "Synth - Nord Electro 7", so
+    /// those decide first; name keywords break ties for loose files.
     public static func category(ext: String, name: String, sourceFolder: String = "") -> SoundCategory {
         if ext == "npno" { return .piano }
-        let hay = "\(name) \(sourceFolder)".lowercased()
-        if hay.contains("organ") || hay.contains("b3") || hay.contains("hammond")
-            || hay.contains("farflsa") || hay.contains("farfisa") || hay.contains("vox continental") {
+        let folder = sourceFolder.lowercased()
+        if folder.contains("synth") { return .synth }
+        if folder.contains("organ") { return .organ }
+        if folder.contains("piano") || folder.contains("keyboard") { return .piano }
+        if folder.contains("strings analog") { return .synth }
+        if folder.contains("string") || folder.contains("brass") || folder.contains("woodwind")
+            || folder.contains("percussion") || folder.contains("choir") || folder.contains("orchestr") {
+            return .orchestral
+        }
+        let n = name.lowercased()
+        if n.contains("organ") || n.contains("b3") || n.contains("hammond")
+            || n.contains("farfisa") || n.contains("vox continental") {
             return .organ
         }
-        if hay.contains("synth") || hay.contains("lead") || hay.contains("pad")
-            || hay.contains("wave") || hay.contains("arp") {
+        // Acoustic instruments before synth keywords: an "Analog Brass" from a
+        // loose folder is still a synth patch, but a bare "Trumpet" is orchestral.
+        if orchestralSubcategory(name: name) != nil, !n.contains("analog"), !n.contains("syn") {
+            return .orchestral
+        }
+        if n.contains("synth") || n.contains("lead") || n.contains("pad")
+            || n.contains("wave") || n.contains("arp") || n.contains("bass") {
             return .synth
         }
+        // SoundFonts with no other hint land in the synth engine (the format is
+        // overwhelmingly used for synth and GM banks).
+        if ext == "sf2" { return .synth }
         return .other
     }
 }
@@ -186,9 +279,13 @@ public struct SoundCatalog: Codable {
                                     copy: Bool = true,
                                     libraryRoot: URL = defaultLibraryRoot) throws -> CatalogEntry {
         let ext = source.pathExtension.lowercased()
-        guard ["npno", "nsmp3", "nsmp4"].contains(ext) else {
+        guard ["npno", "nsmp3", "nsmp4", "sfz", "sf2"].contains(ext) else {
             throw CatalogError.unsupportedType(ext)
         }
+        // SFZ programs reference their samples by relative path — copying just
+        // the .sfz into the managed library would orphan them, so SFZ imports
+        // are always by reference (the source folder must stay in place).
+        let copy = copy && ext != "sfz"
         guard let (name, version) = SoundCatalog.identity(of: source) else {
             throw CatalogError.unreadableFile(source.lastPathComponent)
         }
@@ -199,6 +296,7 @@ public struct SoundCatalog: Codable {
         case .piano: SoundClassifier.pianoSubcategory(name: name)?.rawValue
         case .organ: SoundClassifier.organSubcategory(name: name)?.rawValue
         case .synth: SoundClassifier.synthSubcategory(name: name)?.rawValue
+        case .orchestral: SoundClassifier.orchestralSubcategory(name: name)?.rawValue
         case .other: nil
         }
         let resolvedSubcategory = subcategory ?? heuristic
@@ -236,7 +334,7 @@ public struct SoundCatalog: Codable {
                                       subcategory: String? = nil) {
         guard let i = entries.firstIndex(where: { $0.id == entry.id }) else { return }
         entries[i].category = category
-        entries[i].subcategory = category == .piano ? subcategory : nil
+        entries[i].subcategory = subcategory
     }
 
     public func entries(in category: SoundCategory, subcategory: String? = nil) -> [CatalogEntry] {
@@ -250,11 +348,22 @@ public struct SoundCatalog: Codable {
     /// Header read: name + version without decoding audio (pianos are tens of MB).
     public static func identity(of url: URL) -> (name: String, version: String)? {
         let ext = url.pathExtension.lowercased()
+        let fallback = url.deletingPathExtension().lastPathComponent
+        if ext == "sfz" {
+            guard !SfzParser.parseFile(url).regions.isEmpty else { return nil }
+            return (fallback, "")
+        }
+        if ext == "sf2" {
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+            defer { try? handle.close() }
+            let head = (try? handle.read(upToCount: 12)) ?? Data()
+            guard isSoundFont(bytes: [UInt8](head)) else { return nil }
+            return (fallback, "")
+        }
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
         guard let head = try? handle.read(upToCount: 2048), head.count > 0x67 else { return nil }
         let bytes = [UInt8](head)
-        let fallback = url.deletingPathExtension().lastPathComponent
         if ext == "npno" {
             guard let id = readNspIdentity(bytes) else { return nil }
             return (id.name ?? fallback, id.version)

@@ -281,7 +281,7 @@ private func walkMultiStrokeZones(_ b: [UInt8], start: Int, count: Int,
 }
 
 /// The `map` section's per-zone splits/layers table (codec 4 map v21+, codec 3 v13/14 16-byte
-/// records). Legacy (`NWS`) and codec-3 `map` v12 tables are not ported.
+/// records, codec 3 v12 11-byte stroke-reference records). Legacy (`NWS`) tables are not ported.
 public func readNsmpZones(_ bytes: [UInt8]) -> [NsmpZone] {
     let sections = parseNsmpSections(bytes)
     guard let map = sections.first(where: { $0.tag.hasSuffix("map") }) else { return [] }
@@ -290,12 +290,80 @@ public func readNsmpZones(_ bytes: [UInt8]) -> [NsmpZone] {
     if map.version >= 21 {
         return parseCodec4Zones(bytes, map: map, gids: gids)
     }
+    // Codec-3 format-0 / Library-3.0 `.nsmp3` (`map` version 12): 11-byte
+    // stroke-reference records, distinct from the v13/v14 16-byte form below
+    // (the v14 reader misframes them into garbage zones).
+    if map.version == 12 {
+        return parseCodec3V12Zones(bytes, map: map, sections: sections)
+    }
     // Codec-3 `map`: [6B global][128 × 6B per-note][1B zone count][N × 16B records][1B pad].
     let recStart = map.payloadOffset + 6 + 128 * 6 + 1
     let count = byte(bytes, recStart - 1)
     return (0..<count)
         .filter { recStart + $0 * 16 + 16 <= map.endOffset }
         .map { readZoneRecord(bytes, recStart + $0 * 16) }
+}
+
+/// Map each stroke's global id (`stk` header u32 @+0) to its root key (`stk`
+/// header byte +5) — v12 zone records carry no root, it rides the stroke header.
+private func strokeRootByGlobalId(_ bytes: [UInt8], _ sections: [NsmpSection]) -> [UInt32: Int] {
+    var roots: [UInt32: Int] = [:]
+    for s in sections where s.tag.hasSuffix("stk") {
+        let root = byte(bytes, s.payloadOffset + 5)
+        if root <= 127 { roots[u32be(bytes, s.payloadOffset)] = root }
+    }
+    return roots
+}
+
+/// Zones from `{stroke id, top key}` records: sorted top-down, each reaching
+/// down to the next zone's split point; velocity is the full range (single layer).
+private func zonesFromStrokeRefs(_ raw: [(globalID: Int, keyHigh: Int)],
+                                 roots: [UInt32: Int]) -> [NsmpZone] {
+    let sorted = raw.sorted { $0.keyHigh > $1.keyHigh }
+    return sorted.enumerated().map { i, r in
+        NsmpZone(rootKey: roots[UInt32(r.globalID)] ?? r.keyHigh,
+                 keyLow: i + 1 < sorted.count ? sorted[i + 1].keyHigh + 1 : 0,
+                 keyHigh: r.keyHigh,
+                 velLow: 0, velTop: 127,
+                 zoneMode: 0, zonePlayback: 0, zoneIsOneShot: 0,
+                 globalID: r.globalID)
+    }
+}
+
+/// Codec-3 `map` v12 zone table: 11-byte stroke-reference records
+/// `00 ?? ?? [keyHigh] 00 00 01 [gid:u32 BE]`, located as the maximal run of
+/// valid records after the global+per-note block (ties break toward the payload
+/// end — the real table is the last structure in the section).
+private func parseCodec3V12Zones(_ bytes: [UInt8], map: NsmpSection,
+                                 sections: [NsmpSection]) -> [NsmpZone] {
+    let rec = 11
+    let roots = strokeRootByGlobalId(bytes, sections)
+    let gids = Set(roots.keys)
+    func valid(_ o: Int) -> Bool {
+        byte(bytes, o) == 0 && byte(bytes, o + 6) == 1
+            && byte(bytes, o + 3) >= 1 && byte(bytes, o + 3) <= 127
+            && gids.contains(u32be(bytes, o + 7))
+    }
+    var best = (start: -1, n: 0, trailer: Int.max)
+    var start = map.payloadOffset + 6
+    while start + rec <= map.endOffset {
+        var n = 0
+        var o = start
+        while o + rec <= map.endOffset && valid(o) { n += 1; o += rec }
+        if n > 0 {
+            let trailer = map.endOffset - (start + n * rec)
+            if n > best.n || (n == best.n && trailer < best.trailer) {
+                best = (start, n, trailer)
+            }
+        }
+        start += 1
+    }
+    guard best.start >= 0 else { return [] }
+    let raw = (0..<best.n).map { i -> (globalID: Int, keyHigh: Int) in
+        let o = best.start + i * rec
+        return (Int(u32be(bytes, o + 7)), byte(bytes, o + 3))
+    }
+    return zonesFromStrokeRefs(raw, roots: roots)
 }
 
 // MARK: - Stroke header fields (nsmp.ts)

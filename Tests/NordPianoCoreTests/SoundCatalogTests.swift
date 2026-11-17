@@ -7,8 +7,11 @@ final class SoundCatalogTests: XCTestCase {
 
     func testPianoSubcategoryEP() {
         for name in ["EP7 Amped Tines", "EP9 Stockholm", "Wurlitzer 2", "Rhodes Mk II",
-                     "Clavinet D6", "DX7 Full Tines", "CP80 Electric Grand"] {
+                     "DX7 Full Tines", "CP80 Electric Grand"] {
             XCTAssertEqual(SoundClassifier.pianoSubcategory(name: name), .ep, name)
+        }
+        for name in ["Clavinet D6", "Harpsichord 8ft"] {
+            XCTAssertEqual(SoundClassifier.pianoSubcategory(name: name), .clav, name)
         }
     }
 
@@ -35,7 +38,10 @@ final class SoundCatalogTests: XCTestCase {
     }
 
     func testOrganSubcategory() {
-        for name in ["B3 Tonewheel", "Hammond C3", "B3 Bass Pedals"] {
+        for name in ["B3 Drawbars", "Hammond C3", "HamOrg (Free Version)"] {
+            XCTAssertEqual(SoundClassifier.organSubcategory(name: name), .hammond, name)
+        }
+        for name in ["B3 Model", "C3 Split"] {
             XCTAssertEqual(SoundClassifier.organSubcategory(name: name), .b3, name)
         }
         for name in ["Farfisa Compact", "Vox Continental"] {
@@ -48,7 +54,7 @@ final class SoundCatalogTests: XCTestCase {
 
     func testSynthSubcategory() {
         for name in ["101 Bass 1", "Sub Wave"] {
-            XCTAssertEqual(SoundClassifier.synthSubcategory(name: name), .sub, name)
+            XCTAssertEqual(SoundClassifier.synthSubcategory(name: name), .bass, name)
         }
         for name in ["Analog Pad Nine", "Crystal Pad"] {
             XCTAssertEqual(SoundClassifier.synthSubcategory(name: name), .pad, name)
@@ -56,6 +62,31 @@ final class SoundCatalogTests: XCTestCase {
         for name in ["Saw Lead X", "Soft Wave Lead"] {
             XCTAssertEqual(SoundClassifier.synthSubcategory(name: name), .lead, name)
         }
+        for name in ["AnaStrings DX7", "Arp Sequence One", "Sweep FX"] {
+            XCTAssertEqual([SynthSubcategory.strings, .arp, .fx].contains(SoundClassifier.synthSubcategory(name: name)!), true, name)
+        }
+    }
+
+    func testOrchestralSubcategory() {
+        XCTAssertEqual(SoundClassifier.orchestralSubcategory(name: "Solo Violin"), .strings)
+        XCTAssertEqual(SoundClassifier.orchestralSubcategory(name: "String Ensemble"), .strings)
+        XCTAssertEqual(SoundClassifier.orchestralSubcategory(name: "Trumpet Section"), .brass)
+        XCTAssertEqual(SoundClassifier.orchestralSubcategory(name: "Concert Flute"), .woodwinds)
+        XCTAssertEqual(SoundClassifier.orchestralSubcategory(name: "Marimba"), .mallets)
+        XCTAssertEqual(SoundClassifier.orchestralSubcategory(name: "Choir Aah"), .choir)
+    }
+
+    func testCategoryFromFolderHints() {
+        XCTAssertEqual(SoundClassifier.category(ext: "nsmp3", name: "Mystery",
+                                                sourceFolder: "Strings - Nord Wave 2"), .orchestral)
+        XCTAssertEqual(SoundClassifier.category(ext: "nsmp3", name: "Mystery",
+                                                sourceFolder: "Strings Analog - Nord Wave 2"), .synth)
+        XCTAssertEqual(SoundClassifier.category(ext: "nsmp3", name: "Mystery",
+                                                sourceFolder: "Tuned Percussion - Nord Wave 2"), .orchestral)
+        XCTAssertEqual(SoundClassifier.category(ext: "nsmp3", name: "Mystery",
+                                                sourceFolder: "Piano_Keyboard - Nord Wave 2"), .piano)
+        XCTAssertEqual(SoundClassifier.category(ext: "nsmp3", name: "Trumpet"), .orchestral)
+        XCTAssertEqual(SoundClassifier.category(ext: "nsmp3", name: "Analog Brass"), .other)
     }
 
     func testImportClassifiesSubcategoryAndSize() throws {

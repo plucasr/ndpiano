@@ -1,0 +1,30 @@
+{
+  "name": "Mono Lead (Rudess-style)",
+  "version": 1,
+  "fx": {
+    "monoOn": true,
+    "legato": true,
+    "glideNorm": 0.15,
+    "filterOn": true,
+    "filterType": 0,
+    "filterNorm": 0.75,
+    "filterRes": 0.25,
+    "filterKeyTrack": 0.5,
+    "fltEnvAmt": 0.3,
+    "fltEnvDcy": 0.3,
+    "driveOn": true,
+    "driveNorm": 0.4,
+    "driveMix": 0.5,
+    "delayOn": true,
+    "delayTime": 0.35,
+    "delayFeedback": 0.3,
+    "delayMix": 0.25,
+    "vibMode": 2,
+    "vibDepth": 0.4,
+    "vibRate": 0.5,
+    "vibDelay": 1.2,
+    "wheelToCutoff": 0.5,
+    "bendUp": 2,
+    "bendDown": 2
+  }
+}
