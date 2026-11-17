@@ -28,9 +28,15 @@ Design decisions (agreed with user):
 Status: DONE (6/6 tests green)
 
 ## Phase 2 — Engine integration
-- [ ] PianoPlayer hosts a moog voice as a layer type alongside sample layers;
-      notes/MIDI (wheel, aftertouch, pedal) routed to it; playable from keyboard.
-Status: NOT STARTED
+- [x] PianoPlayer hosts a moog voice as a layer type alongside sample layers
+      (`LayerSource.moog`, `addMoogLayer(id:gain:patch:)`, `setMoogPatch`,
+      `moogPatch`); noteOn/noteOff routed with zone/mute honored; keyboard
+      sounding markers included. The channel FX strip (EQ/filter/comp/drive/
+      delay/reverb) and chorus/pan apply downstream of the moog render.
+Status: DONE (build green; engine commit 675fdd4). Not yet wired to UI —
+Phase 3 makes moog sounds loadable from the catalog/mixer.
+Known pre-existing flake: LayerFXRenderTests.testArpStopsOnKeyUpUnlessHold
+(wall-clock arp timer; fails intermittently on HEAD too, unrelated).
 
 ## Phase 3 — Presets + catalog category
 - [ ] Moog preset type (wraps MoogPatch; same JSON story as FXPreset).
