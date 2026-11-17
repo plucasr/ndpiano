@@ -124,3 +124,36 @@ extension MoogVoiceTests {
         }
     }
 }
+
+extension MoogVoiceTests {
+    private func crossings(_ samples: [Float]) -> Int {
+        var n = 0, prev: Float = 0
+        for s in samples { if prev <= 0 && s > 0 { n += 1 }; prev = s }
+        return n
+    }
+
+    /// +12 semitones of bend ≈ doubles the pitch (zero-crossing proxy), and
+    /// vibrato ≈ leaves the average pitch unchanged.
+    func testBendAndVibratoAffectPitch() {
+        var patch = MoogPatch.lead
+        patch.filterEnvOctaves = 0
+        patch.resonance = 0
+        let base = MoogVoice(patch: patch)
+        base.noteOn(note: 69, velocity: 100)
+        let baseCrossings = crossings(render(base, seconds: 0.3))
+
+        let bent = MoogVoice(patch: patch)
+        bent.bendSemis = 12
+        bent.noteOn(note: 69, velocity: 100)
+        let bentCrossings = crossings(render(bent, seconds: 0.3))
+        XCTAssertEqual(Double(bentCrossings), Double(baseCrossings) * 2, accuracy: Double(baseCrossings) * 0.5,
+                       "+12st bend must roughly double the pitch (base \(baseCrossings), bent \(bentCrossings))")
+
+        let vib = MoogVoice(patch: patch)
+        vib.vibratoSemis = 0.5
+        vib.noteOn(note: 69, velocity: 100)
+        let vibCrossings = crossings(render(vib, seconds: 1))
+        XCTAssertEqual(Double(vibCrossings), Double(baseCrossings) * 10.0 / 3.0, accuracy: Double(baseCrossings),
+                       "vibrato must not move the average pitch much")
+    }
+}

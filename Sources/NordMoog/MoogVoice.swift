@@ -97,6 +97,11 @@ public final class MoogVoice {
 
     /// Live pitch after glide, exposed for tests and UI.
     public private(set) var pitchHz = 440.0
+    /// Pitch wheel offset in semitones, set per render block by the host.
+    public var bendSemis: Double = 0
+    /// Mod wheel → vibrato depth in semitones (0 = off); ~5.5 Hz triangle LFO.
+    public var vibratoSemis: Double = 0
+    private var vibratoPhase: Double = 0
     /// True once the amp contour has finished after the last note-off.
     public var isSilent: Bool { held.isEmpty && ampEnv.stage == .idle }
 
@@ -154,6 +159,9 @@ public final class MoogVoice {
         let glideCoef = p.glideSeconds > 0 ? exp(-5 / (p.glideSeconds * rate)) : 0.0
         let osc2Mul = pow(2, p.osc2DetuneCents / 1200)
         let osc3Mul = pow(2, Double(p.osc3Octave) + p.osc3DetuneCents / 1200)
+        let bendMul = pow(2, bendSemis / 12)
+        let vibratoActive = abs(vibratoSemis) > 0.0001
+        let vibratoRate = 5.5 / rate // cycles per sample
         let mixerDrive = 1.0 // fixed for the minimal voice; drive lives in ladder tanh
         for i in 0..<frames {
             if glideCoef > 0 {
@@ -163,12 +171,20 @@ public final class MoogVoice {
             }
             pitchHz = currentHz
 
+            var effHz = currentHz * bendMul
+            if vibratoActive {
+                vibratoPhase += vibratoRate
+                if vibratoPhase >= 1 { vibratoPhase -= 1 }
+                let vib = sin(2 * .pi * vibratoPhase) * vibratoSemis
+                effHz *= pow(2, vib / 12)
+            }
+
             let fEnv = filterEnv.tick(a: p.filterAttack, d: p.filterDecay,
                                       s: p.filterSustain, r: p.filterRelease, rate: rate)
             let aEnv = ampEnv.tick(a: p.ampAttack, d: p.ampDecay,
                                    s: p.ampSustain, r: p.ampRelease, rate: rate)
 
-            let dt = currentHz / rate
+            let dt = effHz / rate
             let mixed = p.osc1Level * Double(osc.0.tick(dt: dt, pulse: p.osc1Pulse, width: p.pulseWidth))
                 + p.osc2Level * Double(osc.1.tick(dt: dt * osc2Mul, pulse: p.osc2Pulse, width: p.pulseWidth))
                 + p.osc3Level * Double(osc.2.tick(dt: dt * osc3Mul, pulse: p.osc3Pulse, width: p.pulseWidth))

@@ -1350,7 +1350,9 @@ public final class PianoPlayer {
                 let channel = channel(for: layer)
                 if channel.moog == nil { channel.moog = MoogVoice(sampleRate: outRate) }
                 channel.moogNotes.insert(note)
-                channel.moog?.noteOn(note: note, velocity: velocity)
+                // Transpose (the panel's TRANSP knob); the key tracked for
+                // note-off stays the physical one.
+                channel.moog?.noteOn(note: note + fx.octaveShift, velocity: velocity)
                 lock.unlock()
                 continue
             }
@@ -1575,7 +1577,9 @@ public final class PianoPlayer {
                 soundFontChanged = channel.soundingNotes.remove(note) != nil || soundFontChanged
             }
             if channel.moog != nil {
-                if channel.moogNotes.remove(note) != nil { channel.moog?.noteOff(note: note) }
+                if channel.moogNotes.remove(note) != nil {
+                    channel.moog?.noteOff(note: note + channel.fx.octaveShift)
+                }
                 continue
             }
             let fx = channel.fx
@@ -1897,8 +1901,11 @@ public final class PianoPlayer {
                                  pedal: controlPedalValue)
         let mod = fillModulation(channel, fx: fx, morph: morph, frames: frames)
         if let moog = channel.moog {
-            // Moog layer: the voice renders mono into L; copy to R. The FX
-            // strip (EQ/filter/…), chorus and pan below still apply downstream.
+            // Moog layer: pitch wheel and mod wheel (→ vibrato) land here; the
+            // voice renders mono into L, copied to R. The FX strip, chorus and
+            // pan below still apply downstream.
+            moog.bendSemis = Double(bendSemis)
+            moog.vibratoSemis = Double(morph.wheel) * 0.5
             let gain = (layers.first(where: { $0.id == channelID })?.gain ?? 1) * master
             moog.render(into: UnsafeMutableBufferPointer(start: outL, count: frames), frames: frames)
             for frame in 0..<frames {
