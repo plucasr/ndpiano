@@ -913,6 +913,7 @@ final class PlayerModel: ObservableObject {
            let saved = try? JSONDecoder().decode([String: MoogPatch].self, from: data) {
             moogPatches = Dictionary(uniqueKeysWithValues: saved.map { (URL(fileURLWithPath: $0.key), $0.value) })
         }
+        seedMoogPresets()
         if let data = UserDefaults.standard.data(forKey: "scenes"),
            let saved = try? JSONDecoder().decode([Scene].self, from: data) {
             scenes = saved
@@ -923,6 +924,29 @@ final class PlayerModel: ObservableObject {
     private func persistLayerFX() {
         let dict = Dictionary(uniqueKeysWithValues: layerFX.map { ($0.key.path, $0.value) })
         UserDefaults.standard.set(try? JSONEncoder().encode(dict), forKey: "layerFX")
+    }
+
+    /// First launch: write the MoogFactory bank as .moog files into the managed
+    /// library and register them, so the MOOG panel has starting points. Runs
+    /// once ever (defaults flag) and only into an empty MOOG category, so the
+    /// user can delete presets without them coming back.
+    private func seedMoogPresets() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "moogSeeded") else { return }
+        defaults.set(true, forKey: "moogSeeded")
+        guard catalog.entries(in: .moog).isEmpty else { return }
+        let dir = SoundCatalog.defaultLibraryRoot.appendingPathComponent("Moog", isDirectory: true)
+        guard let _ = try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        else { return }
+        for (name, patch) in MoogFactory.presets {
+            let url = dir.appendingPathComponent("\(name).moog")
+            guard let data = try? MoogPreset(name: name, patch: patch).encode(),
+                  let _ = try? data.write(to: url) else { continue }
+            catalog.entries.append(CatalogEntry(name: name, version: "", category: .moog,
+                                                subcategory: nil, path: url.path,
+                                                sizeBytes: Int64(data.count)))
+        }
+        try? catalog.save()
     }
 
     /// Moog layers: the patch per sound (path-keyed), same follow-the-sound

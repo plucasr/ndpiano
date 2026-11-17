@@ -106,3 +106,21 @@ extension MoogVoiceTests {
         XCTAssertEqual(barePreset.patch.glideSeconds, 0.1)
     }
 }
+
+extension MoogVoiceTests {
+    /// Every factory preset must render audible, finite output and round-trip
+    /// through the .moog file encoding.
+    func testFactoryPresetsRender() throws {
+        XCTAssertFalse(MoogFactory.presets.isEmpty)
+        for (name, patch) in MoogFactory.presets {
+            let data = try MoogPreset(name: name, patch: patch).encode()
+            let decoded = try MoogPreset.decode(from: data)
+            XCTAssertEqual(decoded.patch, patch, name)
+            let voice = MoogVoice(patch: patch)
+            voice.noteOn(note: 57, velocity: 110)
+            let audio = render(voice, seconds: 0.3)
+            XCTAssertTrue(audio.allSatisfy { $0.isFinite }, name)
+            XCTAssertGreaterThan(rms(audio), 0.005, "\(name) must be audible")
+        }
+    }
+}
