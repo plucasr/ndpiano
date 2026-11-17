@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 import NordPianoEngine
+import NordMoog
 
 private extension Array {
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
@@ -39,7 +40,10 @@ struct ChannelFXPanel: View {
                 HStack(alignment: .center, spacing: 14) { fxRowA }
                 HStack(alignment: .center, spacing: 14) { fxRowB }
                 HStack(alignment: .center, spacing: 14) { playRow }
-                if isSynth {
+                if isMoog {
+                    HStack(alignment: .center, spacing: 14) { moogOscRow }
+                    HStack(alignment: .center, spacing: 14) { moogFilterRow }
+                } else if isSynth {
                     HStack(alignment: .center, spacing: 14) { synthSections }
                     HStack(alignment: .center, spacing: 14) { modulationRow }
                     HStack(alignment: .center, spacing: 14) { arpRow }
@@ -83,6 +87,129 @@ struct ChannelFXPanel: View {
 
     private var isSynth: Bool {
         model.catalogEntry(for: channel.entry.url)?.category == .synth
+    }
+
+    // MARK: - Moog panel (Phase 4)
+
+    private var isMoog: Bool {
+        model.catalogEntry(for: channel.entry.url)?.category == .moog
+    }
+
+    private var patch: MoogPatch { model.moogPatch(for: channel) }
+
+    private func updatePatch(_ mutate: (inout MoogPatch) -> Void) {
+        var p = patch
+        mutate(&p)
+        model.setMoogPatch(p, for: channel)
+    }
+
+    /// 0…1-style knob on a MoogPatch Double field with an explicit range.
+    private func moogKnob(_ key: WritableKeyPath<MoogPatch, Double>, caption: String,
+                          range: ClosedRange<Double> = 0...1,
+                          readout: @escaping (Double) -> String = { "\(Int($0 * 100))%" }) -> some View {
+        panelKnob(value: Binding(get: { patch[keyPath: key] },
+                                 set: { v in updatePatch { $0[keyPath: key] = v } }),
+                  caption: caption, range: range, readout: readout)
+    }
+
+    /// Knob on a MoogPatch Int field.
+    private func moogIntKnob(_ key: WritableKeyPath<MoogPatch, Int>, caption: String,
+                             range: ClosedRange<Int>,
+                             readout: @escaping (Double) -> String) -> some View {
+        panelKnob(value: Binding(
+            get: { Double(patch[keyPath: key]) },
+            set: { v in updatePatch { $0[keyPath: key] = min(range.upperBound, max(range.lowerBound, Int(v.rounded()))) } }
+        ), caption: caption, range: Double(range.lowerBound)...Double(range.upperBound), readout: readout)
+    }
+
+    /// SAW/PULSE chip for one oscillator.
+    private func waveChip(_ key: WritableKeyPath<MoogPatch, Bool>) -> some View {
+        chipMenu(["SAW", "PULSE"], selected: patch[keyPath: key] ? 1 : 0) { i in
+            updatePatch { $0[keyPath: key] = i == 1 }
+        }
+    }
+
+    /// Row 1: the oscillator bank (each osc with its mixer level) + noise.
+    @ViewBuilder private var moogOscRow: some View {
+        section(label: "OSC 1") {
+            HStack(spacing: 12) {
+                waveChip(\.osc1Pulse)
+                moogKnob(\.osc1Level, caption: "LVL")
+            }
+        }
+        .effectDivider()
+        section(label: "OSC 2") {
+            HStack(spacing: 12) {
+                waveChip(\.osc2Pulse)
+                moogKnob(\.osc2Level, caption: "LVL")
+                moogKnob(\.osc2DetuneCents, caption: "DETUNE", range: -50...50) { v in
+                    String(format: "%+.0fc", v)
+                }
+            }
+        }
+        .effectDivider()
+        section(label: "OSC 3") {
+            HStack(spacing: 12) {
+                waveChip(\.osc3Pulse)
+                moogKnob(\.osc3Level, caption: "LVL")
+                moogIntKnob(\.osc3Octave, caption: "OCT", range: -1...1) { v in
+                    String(format: "%+d", Int(v))
+                }
+                moogKnob(\.osc3DetuneCents, caption: "DETUNE", range: -50...50) { v in
+                    String(format: "%+.0fc", v)
+                }
+            }
+        }
+        .effectDivider()
+        section(label: "MIXER") {
+            HStack(spacing: 12) {
+                moogKnob(\.noiseLevel, caption: "NOISE")
+                moogKnob(\.pulseWidth, caption: "P.WIDTH", range: 0.1...0.9) { "\(Int($0 * 100))%" }
+            }
+        }
+    }
+
+    /// Row 2: ladder filter, its contour, the amp contour, and output/glide.
+    @ViewBuilder private var moogFilterRow: some View {
+        section(label: "FILTER") {
+            HStack(spacing: 12) {
+                moogKnob(\.cutoffHz, caption: "CUTOFF", range: 20...12_000) {
+                    SynthCurves.formatHz($0)
+                }
+                moogKnob(\.resonance, caption: "EMPHASIS")
+                moogKnob(\.filterEnvOctaves, caption: "ENV AMT", range: -4...4) { v in
+                    String(format: "%+.1foct", v)
+                }
+                moogKnob(\.keyTrack, caption: "KB TRK")
+            }
+        }
+        .effectDivider()
+        section(label: "FILTER CONTOUR") {
+            HStack(spacing: 10) {
+                moogKnob(\.filterAttack, caption: "A", range: 0...2) { SynthCurves.formatSeconds($0) }
+                moogKnob(\.filterDecay, caption: "D", range: 0...2) { SynthCurves.formatSeconds($0) }
+                moogKnob(\.filterSustain, caption: "S")
+                moogKnob(\.filterRelease, caption: "R", range: 0...2) { SynthCurves.formatSeconds($0) }
+            }
+        }
+        .effectDivider()
+        section(label: "AMP CONTOUR") {
+            HStack(spacing: 10) {
+                moogKnob(\.ampAttack, caption: "A", range: 0...2) { SynthCurves.formatSeconds($0) }
+                moogKnob(\.ampDecay, caption: "D", range: 0...2) { SynthCurves.formatSeconds($0) }
+                moogKnob(\.ampSustain, caption: "S")
+                moogKnob(\.ampRelease, caption: "R", range: 0...2) { SynthCurves.formatSeconds($0) }
+            }
+        }
+        .effectDivider()
+        section(label: "OUTPUT") {
+            HStack(spacing: 12) {
+                moogKnob(\.glideSeconds, caption: "GLIDE", range: 0...0.3) { v in
+                    v < 0.001 ? "off" : SynthCurves.formatSeconds(v)
+                }
+                moogKnob(\.volume, caption: "VOLUME")
+            }
+        }
     }
 
     /// Chain row 1: tone-shaping (EQ, envelope, stereo, chorus).
@@ -500,28 +627,46 @@ struct ChannelFXPanel: View {
     /// sound, like knob edits).
     private func importPreset() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = isMoog
+            ? [UTType(filenameExtension: "moog") ?? .json]
+            : [.json]
         panel.allowsMultipleSelection = false
         panel.message = "Import an FX preset (JSON)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let preset = try FXPreset.decode(from: Data(contentsOf: url))
-            model.setLayerFX(preset.fx, for: channel)
-            model.status = "Preset “\(preset.name)” → \(channel.entry.name)"
+            if isMoog {
+                let preset = try MoogPreset.decode(from: Data(contentsOf: url))
+                model.setMoogPatch(preset.patch, for: channel)
+                model.status = "Preset “\(preset.name)” → \(channel.entry.name)"
+            } else {
+                let preset = try FXPreset.decode(from: Data(contentsOf: url))
+                model.setLayerFX(preset.fx, for: channel)
+                model.status = "Preset “\(preset.name)” → \(channel.entry.name)"
+            }
         } catch {
             model.status = "Preset import failed: \(error.localizedDescription)"
         }
     }
 
-    /// Save this channel's current FX state as a preset JSON.
+    /// Save this channel's current FX state as a preset JSON (.moog for moog
+    /// channels).
     private func exportPreset() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "\(channel.entry.name).json"
+        if isMoog {
+            panel.allowedContentTypes = [UTType(filenameExtension: "moog") ?? .json]
+            panel.nameFieldStringValue = "\(channel.entry.name).moog"
+        } else {
+            panel.allowedContentTypes = [.json]
+            panel.nameFieldStringValue = "\(channel.entry.name).json"
+        }
         panel.message = "Export the current FX as a preset"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try FXPreset(name: channel.entry.name, fx: fx).encode().write(to: url)
+            if isMoog {
+                try MoogPreset(name: channel.entry.name, patch: patch).encode().write(to: url)
+            } else {
+                try FXPreset(name: channel.entry.name, fx: fx).encode().write(to: url)
+            }
             model.status = "Preset saved: \(url.lastPathComponent)"
         } catch {
             model.status = "Preset export failed: \(error.localizedDescription)"

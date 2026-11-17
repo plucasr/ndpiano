@@ -732,6 +732,8 @@ final class PlayerModel: ObservableObject {
         var gains: [String: Float] = [:]
         var muted: [String] = []
         var layerFX: [String: PianoPlayer.LayerFX] = [:]
+        /// Moog patches by sound path (optional for pre-moog scenes).
+        var moogPatches: [String: MoogPatch]? = nil
         var fx = MasterFX()
     }
 
@@ -759,6 +761,7 @@ final class PlayerModel: ObservableObject {
             gains: Dictionary(uniqueKeysWithValues: urls.compactMap { u in gains[u].map { (u.path, $0) } }),
             muted: muted.map(\.path),
             layerFX: Dictionary(uniqueKeysWithValues: urls.compactMap { u in layerFX[u].map { (u.path, $0) } }),
+            moogPatches: Dictionary(uniqueKeysWithValues: urls.compactMap { u in moogPatches[u].map { (u.path, $0) } }),
             fx: fx)
     }
 
@@ -816,6 +819,7 @@ final class PlayerModel: ObservableObject {
         for (path, gain) in scene.gains { gains[URL(fileURLWithPath: path)] = gain }
         muted = Set(scene.muted.map { URL(fileURLWithPath: $0) })
         for (path, fx) in scene.layerFX { layerFX[URL(fileURLWithPath: path)] = fx }
+        for (path, patch) in scene.moogPatches ?? [:] { moogPatches[URL(fileURLWithPath: path)] = patch }
         let fx = scene.fx
         filterOn = fx.filterOn; filterNorm = fx.filterNorm
         compOn = fx.compOn; compAmount = fx.compAmount
@@ -830,6 +834,7 @@ final class PlayerModel: ObservableObject {
                 player.setLayerGain(gains[channel.entry.url] ?? 1, id: channel.id)
                 player.setLayerMuted(muted.contains(channel.entry.url), id: channel.id)
                 player.setLayerFX(layerFX[channel.entry.url] ?? PianoPlayer.LayerFX(), id: channel.id)
+                if let patch = moogPatches[channel.entry.url] { player.setMoogPatch(patch, id: channel.id) }
                 applyDrawbars(layerFX[channel.entry.url] ?? PianoPlayer.LayerFX(), for: channel)
             }
         }
@@ -904,6 +909,10 @@ final class PlayerModel: ObservableObject {
            let saved = try? JSONDecoder().decode([String: PianoPlayer.LayerFX].self, from: data) {
             layerFX = Dictionary(uniqueKeysWithValues: saved.map { (URL(fileURLWithPath: $0.key), $0.value) })
         }
+        if let data = UserDefaults.standard.data(forKey: "moogPatches"),
+           let saved = try? JSONDecoder().decode([String: MoogPatch].self, from: data) {
+            moogPatches = Dictionary(uniqueKeysWithValues: saved.map { (URL(fileURLWithPath: $0.key), $0.value) })
+        }
         if let data = UserDefaults.standard.data(forKey: "scenes"),
            let saved = try? JSONDecoder().decode([Scene].self, from: data) {
             scenes = saved
@@ -914,6 +923,26 @@ final class PlayerModel: ObservableObject {
     private func persistLayerFX() {
         let dict = Dictionary(uniqueKeysWithValues: layerFX.map { ($0.key.path, $0.value) })
         UserDefaults.standard.set(try? JSONEncoder().encode(dict), forKey: "layerFX")
+    }
+
+    /// Moog layers: the patch per sound (path-keyed), same follow-the-sound
+    /// rule as layerFX. Persisted; edits go straight to the live voice.
+    @Published var moogPatches: [URL: MoogPatch] = [:] {
+        didSet {
+            let dict = Dictionary(uniqueKeysWithValues: moogPatches.map { ($0.key.path, $0.value) })
+            UserDefaults.standard.set(try? JSONEncoder().encode(dict), forKey: "moogPatches")
+        }
+    }
+
+    /// The channel's patch: the saved edit, else the one the .moog file loaded.
+    func moogPatch(for channel: ChannelState) -> MoogPatch {
+        moogPatches[channel.entry.url] ?? player?.moogPatch(id: channel.id) ?? .lead
+    }
+
+    /// Patch edit from the moog panel: live + remembered per sound.
+    func setMoogPatch(_ patch: MoogPatch, for channel: ChannelState) {
+        moogPatches[channel.entry.url] = patch
+        player?.setMoogPatch(patch, id: channel.id)
     }
 
     /// Mixer strip change: EQ, filter, compressor or reverb of one channel.
@@ -1197,6 +1226,7 @@ final class PlayerModel: ObservableObject {
                     ? [] : [UInt8](try Data(contentsOf: entry.url))
                 try addToPlayer(player, bytes: bytes, url: entry.url, id: id, gain: gains[entry.url] ?? 1)
                 player.setLayerFX(layerFX[entry.url] ?? PianoPlayer.LayerFX(), id: id)
+                if let patch = moogPatches[entry.url] { player.setMoogPatch(patch, id: id) }
                 // Drawbar organ with no saved positions: seed the classic 888
                 // registration (program defaults may be all-silent).
                 if !player.layerGateCCs(id: id).isEmpty,
@@ -1290,6 +1320,7 @@ final class PlayerModel: ObservableObject {
                 ? [] : [UInt8](try Data(contentsOf: url))
             try addToPlayer(player, bytes: bytes, url: url, id: id, gain: 1)
             player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: id)
+            if let patch = moogPatches[url] { player.setMoogPatch(patch, id: id) }
         } catch {
             status = "Error: \(error)"
             return

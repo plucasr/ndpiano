@@ -52,8 +52,15 @@ Moog channels currently show the standard FX panel — the moog-specific view
 is Phase 4.
 
 ## Phase 4 — Moog FX view
-- [ ] ChannelFXPanel shows the moog layout (sections above) for moog channels.
-Status: NOT STARTED
+- [x] ChannelFXPanel swaps the synth rows for a moog layout on moog channels
+      (keeps the shared tone/insert rows): OSC 1/2/3 (wave chip, level,
+      detune, octave) + MIXER (noise, pulse width) | FILTER (cutoff, emphasis,
+      env amt, kb track) + FILTER CONTOUR + AMP CONTOUR | OUTPUT (glide, volume).
+- [x] Patch state in PlayerModel: per-sound (path-keyed), UserDefaults-backed,
+      applied on load/scene recall; scenes capture moog patches too.
+- [x] Header import/export buttons branch to .moog presets for moog channels.
+Status: DONE (build green). Layout is the Minimoog front-panel order inside
+the existing popover — no fullscreen modal.
 
 ## Phase 5 — Starter presets
 - [ ] 3 lead presets tuned by ear (compare against openmini / CA-72 VST).
