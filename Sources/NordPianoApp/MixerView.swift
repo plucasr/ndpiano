@@ -58,7 +58,7 @@ private struct ChannelStrip: View {
                 // Volume fader + mute
                 VStack(spacing: 3) {
                     Fader(value: Binding(
-                        get: { Double(model.gains[entry.url] ?? 1) },
+                        get: { Double(model.gains[entry.url] ?? model.defaultGain(for: entry.url)) },
                         set: { v in model.setGain(Float(v), for: channel) }
                     ), range: 0...1.5)
                     Text("VOL")

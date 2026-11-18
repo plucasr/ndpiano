@@ -246,7 +246,7 @@ struct ContentView: View {
             if isSel && model.selected.count > 1,
                let channel = model.channels.first(where: { $0.entry == entry }) {
                 Slider(value: Binding(
-                    get: { Double(model.gains[entry.url] ?? 1) },
+                    get: { Double(model.gains[entry.url] ?? model.defaultGain(for: entry.url)) },
                     set: { model.setGain(Float($0), for: channel) }
                 ), in: 0...1.5)
                 .tint(NordColor.red)

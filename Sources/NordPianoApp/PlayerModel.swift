@@ -831,7 +831,7 @@ final class PlayerModel: ObservableObject {
         // syncLayers only pushes gain/mute/FX to newly added layers — refresh all.
         if let player {
             for channel in channels {
-                player.setLayerGain(gains[channel.entry.url] ?? 1, id: channel.id)
+                player.setLayerGain(gains[channel.entry.url] ?? defaultGain(for: channel.entry.url), id: channel.id)
                 player.setLayerMuted(muted.contains(channel.entry.url), id: channel.id)
                 player.setLayerFX(layerFX[channel.entry.url] ?? PianoPlayer.LayerFX(), id: channel.id)
                 if let patch = moogPatches[channel.entry.url] { player.setMoogPatch(patch, id: channel.id) }
@@ -1223,6 +1223,13 @@ final class PlayerModel: ObservableObject {
         player?.setLayerGain(gain, id: channel.id)
     }
 
+    /// Channel gain when the user hasn't set one: moog voices run hotter than
+    /// samples (3 oscillators into a ladder), so they start at 50% instead of
+    /// clipping the mix; the fader can always bring them up.
+    func defaultGain(for url: URL) -> Float {
+        url.pathExtension.lowercased() == "moog" ? 0.5 : 1
+    }
+
     func toggleMute(_ channel: ChannelState) {
         let url = channel.entry.url
         let isMuted = !muted.contains(url)
@@ -1248,7 +1255,7 @@ final class PlayerModel: ObservableObject {
                 // (SoundFonts run to hundreds of MB).
                 let bytes = entry.url.pathExtension.lowercased() == "sf2"
                     ? [] : [UInt8](try Data(contentsOf: entry.url))
-                try addToPlayer(player, bytes: bytes, url: entry.url, id: id, gain: gains[entry.url] ?? 1)
+                try addToPlayer(player, bytes: bytes, url: entry.url, id: id, gain: gains[entry.url] ?? defaultGain(for: entry.url))
                 player.setLayerFX(layerFX[entry.url] ?? PianoPlayer.LayerFX(), id: id)
                 if let patch = moogPatches[entry.url] { player.setMoogPatch(patch, id: id) }
                 // Drawbar organ with no saved positions: seed the classic 888
@@ -1342,7 +1349,7 @@ final class PlayerModel: ObservableObject {
             // .sf2 loads into AUSampler by URL — never read into memory.
             let bytes = url.pathExtension.lowercased() == "sf2"
                 ? [] : [UInt8](try Data(contentsOf: url))
-            try addToPlayer(player, bytes: bytes, url: url, id: id, gain: 1)
+            try addToPlayer(player, bytes: bytes, url: url, id: id, gain: defaultGain(for: url))
             player.setLayerFX(layerFX[url] ?? PianoPlayer.LayerFX(), id: id)
             if let patch = moogPatches[url] { player.setMoogPatch(patch, id: id) }
         } catch {
