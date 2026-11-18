@@ -28,6 +28,7 @@ struct ChannelFXPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             browseHeader
+            levelSlider
 
             let gateCCs = model.drawbarCCs(for: channel)
             if !gateCCs.isEmpty { drawbarRow(count: gateCCs.count) }
@@ -52,6 +53,30 @@ struct ChannelFXPanel: View {
             .fixedSize()
         }
         .padding(18)
+    }
+
+    /// Full-width channel level slider: the mixer's fader is small, so this
+    /// gives precision — a squared taper stretches the travel at low volumes.
+    private var levelSlider: some View {
+        let gain = Double(model.gains[channel.entry.url] ?? 1)
+        // Position 0…1 ↔ gain 0…1.5 with a squared curve: half travel = 0.375.
+        let position = sqrt(min(1, max(0, gain / 1.5)))
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("LEVEL")
+                    .font(NordFont.font(9, weight: .semibold))
+                    .foregroundStyle(NordColor.red)
+                Spacer()
+                Text("\(Int((gain * 100).rounded()))%")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(NordColor.subtext)
+            }
+            Slider(value: Binding(
+                get: { position },
+                set: { p in model.setGain(Float(1.5 * p * p), for: channel) }
+            ), in: 0...1)
+            .tint(NordColor.red)
+        }
     }
 
     /// The classic Hammond drawbar footages (16′ … 1′), shown under the faders.
